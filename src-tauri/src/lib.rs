@@ -2,7 +2,7 @@ mod gpu;
 mod metrics;
 
 use metrics::{MetricsCollector, MetricsSnapshot};
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -14,6 +14,7 @@ use tauri::ActivationPolicy;
 
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
+type IntervalState = Arc<AtomicU64>;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "resourcescope-tray";
@@ -29,6 +30,13 @@ const MENU_QUIT: &str = "quit";
 fn get_metrics(state: tauri::State<CollectorState>) -> MetricsSnapshot {
     let mut collector = state.lock().unwrap();
     collector.collect()
+}
+
+#[tauri::command]
+fn set_refresh_interval(interval_ms: u64, state: tauri::State<IntervalState>) -> Result<(), String> {
+    let clamped = interval_ms.clamp(500, 10_000);
+    state.store(clamped, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -156,16 +164,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 // ─── Background event loop ────────────────────────────────────────────────────
 
-/// Spawn background task that emits "metrics_update" every `interval_ms`
-fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_ms: u64) {
+/// Spawn background task that emits "metrics_update" at a dynamic interval.
+/// The interval is read from `interval_state` each tick, so changes take effect
+/// on the next cycle without restarting the task.
+fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: IntervalState) {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
-        // Let the first tick fire immediately (tokio default) but consume it
-        // to avoid a burst on startup
-        ticker.tick().await;
+        // Consume the first immediate tick to avoid a burst on startup
+        let initial_ms = interval_state.load(Ordering::Relaxed);
+        tokio::time::sleep(std::time::Duration::from_millis(initial_ms)).await;
 
         loop {
-            ticker.tick().await;
             let snapshot = {
                 let mut col = state.lock().unwrap();
                 col.collect()
@@ -173,6 +181,9 @@ fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_ms: u64) {
             if let Err(e) = app.emit("metrics_update", &snapshot) {
                 eprintln!("emit error: {e}");
             }
+
+            let ms = interval_state.load(Ordering::Relaxed);
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
         }
     });
 }
@@ -184,11 +195,17 @@ pub fn run() {
     let collector = Arc::new(Mutex::new(MetricsCollector::new()));
     let collector_for_loop = Arc::clone(&collector);
 
+    // Default interval: 1500ms — changeable at runtime via set_refresh_interval
+    let interval_state: IntervalState = Arc::new(AtomicU64::new(1500));
+    let interval_for_loop = Arc::clone(&interval_state);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(collector)
+        .manage(interval_state)
         .invoke_handler(tauri::generate_handler![
             get_metrics,
+            set_refresh_interval,
             hide_to_tray,
             show_main_window_command,
             toggle_main_window_command
@@ -205,9 +222,9 @@ pub fn run() {
             build_tray(&app.handle())?;
             set_launch_presence(&app.handle(), true);
 
-            // Start background metrics emission at 1500ms (fast tick)
+            // Start background metrics emission (dynamic interval via AtomicU64)
             let handle = app.handle().clone();
-            start_metrics_loop(handle, collector_for_loop, 1500);
+            start_metrics_loop(handle, collector_for_loop, interval_for_loop);
             Ok(())
         })
         .run(tauri::generate_context!())

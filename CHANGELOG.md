@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-03-28
+
+### Added
+- Built out CPU, Memory, Disk, Network, Processes, and Settings views
+- Added persisted settings store and live refresh interval control
+- Added richer system-monitor dashboard coverage beyond the initial overview
+
+### Changed
+- Polished the app from a partial prototype into a full multi-view desktop monitor
+
+
 ## [0.1.1] - 2026-03-28
 
 ### Changed

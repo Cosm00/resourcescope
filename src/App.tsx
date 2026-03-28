@@ -4,20 +4,32 @@ import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import Dashboard from './components/Dashboard'
+import CpuPanel from './components/panels/CpuPanel'
+import MemoryPanel from './components/panels/MemoryPanel'
+import DiskPanel from './components/panels/DiskPanel'
+import NetworkPanel from './components/panels/NetworkPanel'
+import ProcessesPanel from './components/panels/ProcessesPanel'
+import SettingsPanel from './components/panels/SettingsPanel'
 import { useMetricsStore } from './store/metricsStore'
+import { useSettingsStore } from './store/settingsStore'
 import type { MetricsSnapshot } from './types'
 
 export default function App() {
   const [activeNav, setActiveNav] = useState('overview')
   const ingest = useMetricsStore(s => s.ingestSnapshot)
+  const refreshIntervalMs = useSettingsStore(s => s.refreshIntervalMs)
+  const setRefreshInterval = useSettingsStore(s => s.setRefreshInterval)
 
   useEffect(() => {
-    // Initial load — get one snapshot immediately
     invoke<MetricsSnapshot>('get_metrics')
       .then(ingest)
       .catch(err => console.warn('[ResourceScope] Initial metrics failed:', err))
 
-    // Subscribe to streaming updates from Rust backend
+    // Apply persisted refresh interval to backend on startup
+    if (refreshIntervalMs !== 1500) {
+      setRefreshInterval(refreshIntervalMs)
+    }
+
     const unlisten = listen<MetricsSnapshot>('metrics_update', (event) => {
       ingest(event.payload)
     })
@@ -35,21 +47,14 @@ export default function App() {
         <TopBar />
 
         <div className="flex-1 flex overflow-hidden">
-          {(activeNav === 'overview' || activeNav === 'gpu') && <Dashboard />}
-          {activeNav !== 'overview' && activeNav !== 'gpu' && (
-            <div className="flex-1 flex items-center justify-center flex-col gap-3">
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-                🚧
-              </div>
-              <p className="text-sm font-medium capitalize" style={{ color: 'var(--text-secondary)' }}>
-                {activeNav} panel — coming soon
-              </p>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Switch to Overview to see the live dashboard
-              </p>
-            </div>
-          )}
+          {activeNav === 'overview' && <Dashboard />}
+          {activeNav === 'gpu'      && <Dashboard />}
+          {activeNav === 'cpu'      && <CpuPanel />}
+          {activeNav === 'memory'   && <MemoryPanel />}
+          {activeNav === 'disk'     && <DiskPanel />}
+          {activeNav === 'network'  && <NetworkPanel />}
+          {activeNav === 'processes' && <ProcessesPanel />}
+          {activeNav === 'settings' && <SettingsPanel />}
         </div>
       </div>
     </div>
