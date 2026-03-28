@@ -6,8 +6,11 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    ActivationPolicy, AppHandle, Emitter, Manager, WindowEvent,
+    AppHandle, Emitter, Manager, WindowEvent,
 };
+
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
 
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
