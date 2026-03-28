@@ -96,6 +96,14 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 
 ---
 
+
+## Support
+
+If you find ResourceScope useful, you can support development here:
+
+- **GitHub Sponsors:** https://github.com/sponsors/Cosm00
+- **Ko-fi:** https://ko-fi.com/popfindr
+
 ## Contributing
 
 Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
