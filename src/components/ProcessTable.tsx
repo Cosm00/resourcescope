@@ -2,6 +2,9 @@ import React, { useState, useMemo, useCallback } from 'react'
 import { useMetricsStore, fmtBytes } from '../store/metricsStore'
 import type { ProcessInfo } from '../types'
 
+// Stable empty array — prevents infinite re-render from `?? []` in selector
+const EMPTY_PROCESSES: ProcessInfo[] = []
+
 type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid'
 
 const UsageBar = React.memo(function UsageBar({
@@ -52,7 +55,7 @@ const ProcessRow = React.memo(function ProcessRow({ proc, isLast }: { proc: Proc
 })
 
 export default function ProcessTable() {
-  const processes = useMetricsStore(s => s.snapshot?.processes ?? [])
+  const processes = useMetricsStore(s => s.snapshot?.processes ?? EMPTY_PROCESSES)
   const [sortKey, setSortKey] = useState<SortKey>('cpu_pct')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 

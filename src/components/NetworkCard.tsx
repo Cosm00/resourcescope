@@ -1,13 +1,17 @@
 import React from 'react'
 import { useMetricsStore, fmtBps } from '../store/metricsStore'
 import Sparkline from './Sparkline'
+import type { NetInfo } from '../types'
+
+// Stable empty array — prevents infinite re-render from `?? []` in selector
+const EMPTY_NETS: NetInfo[] = []
 
 export default function NetworkCard() {
   const recvBps = useMetricsStore(s => s.netRecvBps)
   const sentBps = useMetricsStore(s => s.netSentBps)
   const recvHistory = useMetricsStore(s => s.netRecvHistory)
   const sentHistory = useMetricsStore(s => s.netSentHistory)
-  const nets = useMetricsStore(s => s.snapshot?.networks ?? [])
+  const nets = useMetricsStore(s => s.snapshot?.networks ?? EMPTY_NETS)
 
   return (
     <div className="rounded-2xl p-4 flex flex-col gap-3 h-full"

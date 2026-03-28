@@ -1,5 +1,9 @@
 import React from 'react'
 import { useMetricsStore, fmtBytes, fmtBps } from '../store/metricsStore'
+import type { DiskInfo } from '../types'
+
+// Stable empty arrays — prevents infinite re-render from `?? []` in selectors
+const EMPTY_DISKS: DiskInfo[] = []
 import StatCard from './StatCard'
 import CoreGrid from './CoreGrid'
 import NetworkCard from './NetworkCard'
@@ -27,7 +31,7 @@ export default function Dashboard() {
   const netRecv   = useMetricsStore(s => s.netRecvBps)
   const netSent   = useMetricsStore(s => s.netSentBps)
 
-  const disks     = useMetricsStore(s => s.snapshot?.disks ?? [])
+  const disks     = useMetricsStore(s => s.snapshot?.disks ?? EMPTY_DISKS)
   const primaryDisk = disks[0]
 
   // Slow histories — stable refs between fast ticks
