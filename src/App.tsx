@@ -35,8 +35,8 @@ export default function App() {
         <TopBar />
 
         <div className="flex-1 flex overflow-hidden">
-          {activeNav === 'overview' && <Dashboard />}
-          {activeNav !== 'overview' && (
+          {(activeNav === 'overview' || activeNav === 'gpu') && <Dashboard />}
+          {activeNav !== 'overview' && activeNav !== 'gpu' && (
             <div className="flex-1 flex items-center justify-center flex-col gap-3">
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
                 style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>

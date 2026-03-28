@@ -2,12 +2,15 @@ use serde::Serialize;
 use sysinfo::{Components, Disks, Networks, System};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::gpu::{GpuCollector, GpuInfo};
+
 /// Full snapshot of system metrics — serialized to JSON and sent to frontend
 #[derive(Serialize, Clone, Debug)]
 pub struct MetricsSnapshot {
     pub timestamp: u64,
     pub cpu: CpuInfo,
     pub memory: MemInfo,
+    pub gpu: Option<GpuInfo>,
     pub disks: Vec<DiskInfo>,
     pub networks: Vec<NetInfo>,
     pub processes: Vec<ProcessInfo>,
@@ -67,6 +70,7 @@ pub struct ProcessInfo {
 #[derive(Serialize, Clone, Debug)]
 pub struct HealthInfo {
     pub cpu_temp: Option<f32>,
+    pub gpu_temp: Option<f32>,
     pub overall: String, // "good" | "warn" | "critical"
 }
 
@@ -77,6 +81,7 @@ pub struct MetricsCollector {
     pub disks: Disks,
     pub networks: Networks,
     pub components: Components,
+    pub gpu: GpuCollector,
     prev_net: Option<(u64, Vec<(u64, u64)>)>, // (timestamp_ms, [(recv, sent)])
 }
 
@@ -88,12 +93,14 @@ impl MetricsCollector {
         let mut networks = Networks::new_with_refreshed_list();
         networks.refresh(false);
         let components = Components::new_with_refreshed_list();
+        let gpu = GpuCollector::new();
 
         Self {
             sys,
             disks,
             networks,
             components,
+            gpu,
             prev_net: None,
         }
     }
@@ -137,6 +144,9 @@ impl MetricsCollector {
         };
         let swap_total_bytes = self.sys.total_swap();
         let swap_used_bytes = self.sys.used_swap();
+
+        // ── GPU ──────────────────────────────────────────────────────────────
+        let gpu = self.gpu.collect();
 
         // ── Disks ────────────────────────────────────────────────────────────
         let disks: Vec<DiskInfo> = self.disks.iter().map(|d| {
@@ -213,12 +223,15 @@ impl MetricsCollector {
             })
             .and_then(|c| c.temperature());
 
-        let overall = match (usage_pct, cpu_temp) {
-            (u, Some(t)) if u > 90.0 || t > 95.0 => "critical",
-            (u, Some(t)) if u > 70.0 || t > 80.0 => "warn",
-            (u, None) if u > 90.0 => "critical",
-            (u, None) if u > 70.0 => "warn",
-            _ => "good",
+        let gpu_temp = gpu.as_ref().and_then(|g| g.temperature_c);
+        let gpu_util = gpu.as_ref().and_then(|g| g.utilization_pct).unwrap_or(0.0);
+
+        let overall = if usage_pct > 90.0 || cpu_temp.is_some_and(|t| t > 95.0) || gpu_util > 95.0 || gpu_temp.is_some_and(|t| t > 95.0) {
+            "critical"
+        } else if usage_pct > 70.0 || cpu_temp.is_some_and(|t| t > 80.0) || gpu_util > 85.0 || gpu_temp.is_some_and(|t| t > 85.0) {
+            "warn"
+        } else {
+            "good"
         }.to_string();
 
         MetricsSnapshot {
@@ -239,11 +252,13 @@ impl MetricsCollector {
                 swap_total_bytes,
                 swap_used_bytes,
             },
+            gpu,
             disks,
             networks: networks_info,
             processes,
             health: HealthInfo {
                 cpu_temp,
+                gpu_temp,
                 overall,
             },
         }

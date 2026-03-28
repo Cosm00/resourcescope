@@ -11,6 +11,7 @@ const navItems: NavItem[] = [
   { id: 'overview', icon: <GridIcon />, label: 'Overview' },
   { id: 'cpu', icon: <CpuIcon />, label: 'CPU' },
   { id: 'memory', icon: <MemIcon />, label: 'Memory' },
+  { id: 'gpu', icon: <GpuIcon />, label: 'GPU' },
   { id: 'disk', icon: <DiskIcon />, label: 'Disk' },
   { id: 'network', icon: <NetIcon />, label: 'Network' },
   { id: 'processes', icon: <ProcIcon />, label: 'Processes' },
@@ -116,6 +117,21 @@ function MemIcon() {
     <line x1="5" y1="9" x2="5" y2="11" strokeWidth="2" strokeLinecap="round"/>
     <line x1="8" y1="9" x2="8" y2="11" strokeWidth="2" strokeLinecap="round"/>
     <line x1="11" y1="9" x2="11" y2="11" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+}
+function GpuIcon() {
+  return <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="3" y="4" width="11" height="11" rx="2"/>
+    <rect x="6.5" y="7.5" width="4" height="4" rx="0.75" fill="currentColor" opacity="0.35"/>
+    <line x1="14" y1="7" x2="18" y2="7"/>
+    <line x1="14" y1="10" x2="18" y2="10"/>
+    <line x1="14" y1="13" x2="18" y2="13"/>
+    <line x1="6" y1="2" x2="6" y2="4"/>
+    <line x1="9" y1="2" x2="9" y2="4"/>
+    <line x1="12" y1="2" x2="12" y2="4"/>
+    <line x1="6" y1="15" x2="6" y2="17"/>
+    <line x1="9" y1="15" x2="9" y2="17"/>
+    <line x1="12" y1="15" x2="12" y2="17"/>
   </svg>
 }
 function DiskIcon() {

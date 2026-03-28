@@ -1,13 +1,22 @@
 {
   "name": "resourcescope",
-  "private": true,
   "version": "0.1.0",
+  "description": "A clean, low-overhead system resource monitor for macOS, Windows, and Linux.",
+  "keywords": ["system-monitor", "tauri", "rust", "react", "desktop", "macos", "windows", "linux"],
+  "homepage": "https://github.com/cosm00/resourcescope",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cosm00/resourcescope.git"
+  },
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",

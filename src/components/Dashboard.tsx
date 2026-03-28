@@ -18,6 +18,12 @@ export default function Dashboard() {
   const memUsed   = useMetricsStore(s => s.memUsedGb)
   const memTotal  = useMetricsStore(s => s.memTotalGb)
 
+  const gpu       = useMetricsStore(s => s.snapshot?.gpu ?? null)
+  const gpuPct    = useMetricsStore(s => s.gpuPct)
+  const gpuTemp   = useMetricsStore(s => s.gpuTemp)
+  const gpuUsed   = useMetricsStore(s => s.gpuMemUsedGb)
+  const gpuAlloc  = useMetricsStore(s => s.gpuMemAllocatedGb)
+
   const netRecv   = useMetricsStore(s => s.netRecvBps)
   const netSent   = useMetricsStore(s => s.netSentBps)
 
@@ -27,6 +33,7 @@ export default function Dashboard() {
   // Slow histories — stable refs between fast ticks
   const cpuHistory = useMetricsStore(s => s.cpuHistory)
   const memHistory = useMetricsStore(s => s.memHistory)
+  const gpuHistory = useMetricsStore(s => s.gpuHistory)
 
   const cpuFreqGhz = (cpuFreq / 1000).toFixed(2)
 
@@ -35,7 +42,7 @@ export default function Dashboard() {
       {/* Main column */}
       <div className="flex-1 flex flex-col gap-4 min-w-0">
         {/* Stat cards */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           <StatCard
             title="CPU" icon={<CpuSvg />} color="#4f9cf9"
             value={cpuPct.toFixed(1)} unit="%"
@@ -52,6 +59,15 @@ export default function Dashboard() {
             gaugeValue={memPct}
             tags={[`${(memTotal - memUsed).toFixed(1)} GB free`]}
             history={memHistory}
+          />
+          <StatCard
+            title="GPU" icon={<GpuSvg />} color="#f472b6"
+            value={gpu ? gpuPct.toFixed(0) : '—'} unit={gpu ? '%' : ''}
+            subValue={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : gpu ? `${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB` : undefined}
+            subLabel={gpuTemp !== null ? 'Temp' : gpu ? 'Unified mem' : undefined}
+            gaugeValue={gpu ? gpuPct : undefined}
+            tags={gpu ? [gpu.name, gpu.core_count ? `${gpu.core_count} cores` : gpu.platform] : ['Unavailable']}
+            history={gpu ? gpuHistory : undefined}
           />
           <StatCard
             title="Network ↓" icon={<NetSvg />} color="#00d4aa"
@@ -111,6 +127,23 @@ function MemSvg() {
       <line x1="3.5" y1="6.5" x2="3.5" y2="7.5" strokeWidth="2" strokeLinecap="round"/>
       <line x1="5.5" y1="6.5" x2="5.5" y2="7.5" strokeWidth="2" strokeLinecap="round"/>
       <line x1="7.5" y1="6.5" x2="7.5" y2="7.5" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  )
+}
+function GpuSvg() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="2" y="3" width="8" height="8" rx="1.5"/>
+      <rect x="4.25" y="5.25" width="3.5" height="3.5" rx="0.5"/>
+      <line x1="10" y1="5" x2="12.5" y2="5"/>
+      <line x1="10" y1="7" x2="12.5" y2="7"/>
+      <line x1="10" y1="9" x2="12.5" y2="9"/>
+      <line x1="4" y1="2" x2="4" y2="3"/>
+      <line x1="6" y1="2" x2="6" y2="3"/>
+      <line x1="8" y1="2" x2="8" y2="3"/>
+      <line x1="4" y1="11" x2="4" y2="12"/>
+      <line x1="6" y1="11" x2="6" y2="12"/>
+      <line x1="8" y1="11" x2="8" y2="12"/>
     </svg>
   )
 }

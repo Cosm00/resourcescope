@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore } from '../store/metricsStore'
 
 export default function TopBar() {
@@ -16,6 +17,12 @@ export default function TopBar() {
 
   const healthColor = health === 'critical' ? 'var(--accent-red)' :
     health === 'warn' ? 'var(--accent-orange)' : 'var(--accent-green)'
+
+  const hideToTray = () => {
+    invoke('hide_to_tray').catch(err =>
+      console.warn('[ResourceScope] Hide to tray failed:', err),
+    )
+  }
 
   return (
     <header className="flex items-center justify-between px-5 py-3 flex-shrink-0"
@@ -51,12 +58,28 @@ export default function TopBar() {
       </div>
 
       {/* Right */}
-      <div className="text-right">
-        <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-          {fmt(time)}
-        </div>
-        <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {fmtDate(time)}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={hideToTray}
+          className="h-9 px-3 rounded-xl text-xs font-semibold transition-opacity hover:opacity-90"
+          style={{
+            background: 'var(--bg-card)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+          }}
+          title="Hide ResourceScope to the system tray"
+        >
+          Hide to tray
+        </button>
+
+        <div className="text-right">
+          <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+            {fmt(time)}
+          </div>
+          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            {fmtDate(time)}
+          </div>
         </div>
       </div>
     </header>

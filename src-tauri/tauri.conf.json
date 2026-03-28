@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "ResourceScope",
         "width": 1280,
         "height": 800,

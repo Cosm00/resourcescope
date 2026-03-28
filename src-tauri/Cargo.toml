@@ -1,11 +1,11 @@
 [package]
 name = "resourcescope"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A clean, low-overhead system resource monitor for macOS, Windows, and Linux."
+authors = ["cosm00"]
+license = "MIT"
+repository = "https://github.com/cosm00/resourcescope"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

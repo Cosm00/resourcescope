@@ -18,6 +18,23 @@ export interface MemInfo {
   swap_used_bytes: number
 }
 
+export interface GpuInfo {
+  platform: string
+  name: string
+  vendor: string
+  core_count: number | null
+  utilization_pct: number | null
+  renderer_utilization_pct: number | null
+  tiler_utilization_pct: number | null
+  memory_used_bytes: number | null
+  memory_allocated_bytes: number | null
+  memory_driver_bytes: number | null
+  temperature_c: number | null
+  power_state: number | null
+  last_submission_pid: number | null
+  collection_method: string
+}
+
 export interface DiskInfo {
   name: string
   mount_point: string
@@ -47,6 +64,7 @@ export interface ProcessInfo {
 
 export interface HealthInfo {
   cpu_temp: number | null
+  gpu_temp: number | null
   overall: 'good' | 'warn' | 'critical'
 }
 
@@ -54,6 +72,7 @@ export interface MetricsSnapshot {
   timestamp: number
   cpu: CpuInfo
   memory: MemInfo
+  gpu: GpuInfo | null
   disks: DiskInfo[]
   networks: NetInfo[]
   processes: ProcessInfo[]

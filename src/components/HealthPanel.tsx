@@ -20,6 +20,9 @@ export default function HealthPanel() {
   const cpuTemp = useMetricsStore(s => s.cpuTemp)
   const cpuPct = useMetricsStore(s => s.cpuPct)
   const memPct = useMetricsStore(s => s.memPct)
+  const gpu = useMetricsStore(s => s.snapshot?.gpu ?? null)
+  const gpuPct = useMetricsStore(s => s.gpuPct)
+  const gpuTemp = useMetricsStore(s => s.gpuTemp)
 
   const checks: CheckItem[] = [
     {
@@ -36,6 +39,16 @@ export default function HealthPanel() {
       label: 'CPU Temp',
       value: `${cpuTemp?.toFixed(0)}°C`,
       status: (cpuTemp ?? 0) > 95 ? 'critical' : (cpuTemp ?? 0) > 80 ? 'warn' : 'good',
+    } as CheckItem] : []),
+    ...(gpu ? [{
+      label: 'GPU Load',
+      value: `${gpuPct.toFixed(0)}%`,
+      status: gpuPct > 95 ? 'critical' : gpuPct > 85 ? 'warn' : 'good',
+    } as CheckItem] : []),
+    ...(gpuTemp !== null ? [{
+      label: 'GPU Temp',
+      value: `${gpuTemp.toFixed(0)}°C`,
+      status: gpuTemp > 95 ? 'critical' : gpuTemp > 85 ? 'warn' : 'good',
     } as CheckItem] : []),
     ...(snapshot?.disks ?? []).slice(0, 2).map(d => ({
       label: `Disk ${d.mount_point}`,

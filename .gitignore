@@ -1,22 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Tauri build artifacts
+src-tauri/target/
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Local env files
 *.local
+.env
+.env.*
+!.env.example
 
-# Editor directories and files
+# Editor directories
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Template SVG assets (Vite/Tauri scaffold — not used by the app)
+public/vite.svg
+public/tauri.svg
+src/assets/react.svg
+
+# Misc
 *.suo
 *.ntvs*
 *.njsproj

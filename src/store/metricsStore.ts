@@ -55,6 +55,7 @@ function fmtBps(b: number): string {
 const rings = {
   cpu: makeRing(0),
   mem: makeRing(0),
+  gpu: makeRing(0),
   netRecv: makeRing(0),
   netSent: makeRing(0),
 }
@@ -70,6 +71,10 @@ interface MetricsState {
   memPct: number
   memUsedGb: number
   memTotalGb: number
+  gpuPct: number
+  gpuMemUsedGb: number
+  gpuMemAllocatedGb: number
+  gpuTemp: number | null
   health: string
   netRecvBps: number
   netSentBps: number
@@ -77,6 +82,7 @@ interface MetricsState {
   // Slow histories (updated every N ticks)
   cpuHistory: number[]
   memHistory: number[]
+  gpuHistory: number[]
   netRecvHistory: number[]
   netSentHistory: number[]
   coreUsage: number[]
@@ -99,12 +105,17 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
   memPct: 0,
   memUsedGb: 0,
   memTotalGb: 0,
+  gpuPct: 0,
+  gpuMemUsedGb: 0,
+  gpuMemAllocatedGb: 0,
+  gpuTemp: null,
   health: 'good',
   netRecvBps: 0,
   netSentBps: 0,
 
   cpuHistory: Array(HISTORY_LEN).fill(0),
   memHistory: Array(HISTORY_LEN).fill(0),
+  gpuHistory: Array(HISTORY_LEN).fill(0),
   netRecvHistory: Array(HISTORY_LEN).fill(0),
   netSentHistory: Array(HISTORY_LEN).fill(0),
   coreUsage: [],
@@ -117,6 +128,7 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
     // Push into rings
     ringPush(rings.cpu, s.cpu.usage_pct)
     ringPush(rings.mem, s.memory.usage_pct)
+    ringPush(rings.gpu, s.gpu?.utilization_pct ?? 0)
 
     const totalRecvBps = s.networks.reduce((acc, n) => acc + n.recv_bps, 0)
     const totalSentBps = s.networks.reduce((acc, n) => acc + n.sent_bps, 0)
@@ -130,6 +142,10 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
       memPct: s.memory.usage_pct,
       memUsedGb: s.memory.used_bytes / 1e9,
       memTotalGb: s.memory.total_bytes / 1e9,
+      gpuPct: s.gpu?.utilization_pct ?? 0,
+      gpuMemUsedGb: (s.gpu?.memory_used_bytes ?? 0) / 1e9,
+      gpuMemAllocatedGb: (s.gpu?.memory_allocated_bytes ?? 0) / 1e9,
+      gpuTemp: s.gpu?.temperature_c ?? s.health.gpu_temp,
       health: s.health.overall,
       netRecvBps: totalRecvBps,
       netSentBps: totalSentBps,
@@ -141,6 +157,7 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
       Object.assign(fastUpdate, {
         cpuHistory: ringSnapshot(rings.cpu),
         memHistory: ringSnapshot(rings.mem),
+        gpuHistory: ringSnapshot(rings.gpu),
         netRecvHistory: ringSnapshot(rings.netRecv),
         netSentHistory: ringSnapshot(rings.netSent),
         coreUsage: s.cpu.core_usage,
