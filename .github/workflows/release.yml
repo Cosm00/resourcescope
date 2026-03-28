@@ -65,6 +65,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Validate tag matches app version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAURI_VERSION=$(node -e "const fs=require('fs'); const cfg=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); console.log(cfg.version)")
+          CARGO_VERSION=$(grep '^version = ' src-tauri/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          echo "Tag: $TAG"
+          echo "package.json: $PKG_VERSION"
+          echo "tauri.conf.json: $TAURI_VERSION"
+          echo "Cargo.toml: $CARGO_VERSION"
+          test "$TAG" = "$PKG_VERSION"
+          test "$TAG" = "$TAURI_VERSION"
+          test "$TAG" = "$CARGO_VERSION"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
