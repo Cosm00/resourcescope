@@ -1,6 +1,6 @@
 [package]
 name = "resourcescope"
-version = "0.1.0"
+version = "0.1.1"
 description = "A clean, low-overhead system resource monitor for macOS, Windows, and Linux."
 authors = ["cosm00"]
 license = "MIT"

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-28
+
+### Changed
+- Added GitHub Actions CI/release automation for macOS, Windows, and Linux artifacts
+- Fixed blank Tauri UI issue on macOS WebKit builds
+
 ## [0.1.0] - 2026-03-28
 
 ### Added
