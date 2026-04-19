@@ -15,6 +15,7 @@ use tauri::ActivationPolicy;
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
 type IntervalState = Arc<AtomicU64>;
+type MenubarStatsState = Arc<std::sync::atomic::AtomicBool>;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "resourcescope-tray";
@@ -42,6 +43,12 @@ fn set_refresh_interval(interval_ms: u64, state: tauri::State<IntervalState>) ->
 #[tauri::command]
 fn hide_to_tray(app: AppHandle) -> Result<(), String> {
     hide_main_window(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_show_menubar_stats(show: bool, state: tauri::State<MenubarStatsState>) -> Result<(), String> {
+    state.store(show, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -167,7 +174,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 /// Spawn background task that emits "metrics_update" at a dynamic interval.
 /// The interval is read from `interval_state` each tick, so changes take effect
 /// on the next cycle without restarting the task.
-fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: IntervalState) {
+fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: IntervalState, menubar_stats_state: MenubarStatsState) {
     tokio::spawn(async move {
         // Consume the first immediate tick to avoid a burst on startup
         let initial_ms = interval_state.load(Ordering::Relaxed);
@@ -180,6 +187,19 @@ fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: Int
             };
             if let Err(e) = app.emit("metrics_update", &snapshot) {
                 eprintln!("emit error: {e}");
+            }
+
+            if menubar_stats_state.load(Ordering::Relaxed) {
+                if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                    let title = format!("CPU {:>3.0}%  MEM {:>3.0}%", snapshot.cpu.usage_pct, snapshot.memory.usage_pct);
+                    let _ = tray.set_title(Some(title));
+                    let _ = tray.set_tooltip(Some(format!(
+                        "ResourceScope\nCPU: {:.1}%\nMemory: {:.1}%\nProcesses: {}",
+                        snapshot.cpu.usage_pct,
+                        snapshot.memory.usage_pct,
+                        snapshot.processes.len()
+                    )));
+                }
             }
 
             let ms = interval_state.load(Ordering::Relaxed);
@@ -198,15 +218,19 @@ pub fn run() {
     // Default interval: 1500ms — changeable at runtime via set_refresh_interval
     let interval_state: IntervalState = Arc::new(AtomicU64::new(1500));
     let interval_for_loop = Arc::clone(&interval_state);
+    let menubar_stats_state: MenubarStatsState = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let menubar_stats_for_loop = Arc::clone(&menubar_stats_state);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(collector)
         .manage(interval_state)
+        .manage(menubar_stats_state)
         .invoke_handler(tauri::generate_handler![
             get_metrics,
             set_refresh_interval,
             hide_to_tray,
+            set_show_menubar_stats,
             show_main_window_command,
             toggle_main_window_command
         ])
@@ -224,7 +248,7 @@ pub fn run() {
 
             // Start background metrics emission (dynamic interval via AtomicU64)
             let handle = app.handle().clone();
-            start_metrics_loop(handle, collector_for_loop, interval_for_loop);
+            start_metrics_loop(handle, collector_for_loop, interval_for_loop, menubar_stats_for_loop);
             Ok(())
         })
         .run(tauri::generate_context!())

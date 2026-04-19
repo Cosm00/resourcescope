@@ -18,6 +18,7 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('overview')
   const ingest = useMetricsStore(s => s.ingestSnapshot)
   const refreshIntervalMs = useSettingsStore(s => s.refreshIntervalMs)
+  const showMenubarStats = useSettingsStore(s => s.showMenubarStats)
   const setRefreshInterval = useSettingsStore(s => s.setRefreshInterval)
 
   useEffect(() => {
@@ -30,6 +31,10 @@ export default function App() {
       setRefreshInterval(refreshIntervalMs)
     }
 
+    invoke('set_show_menubar_stats', { show: showMenubarStats }).catch(err =>
+      console.warn('[ResourceScope] Menubar stats toggle failed:', err),
+    )
+
     const unlisten = listen<MetricsSnapshot>('metrics_update', (event) => {
       ingest(event.payload)
     })
@@ -37,7 +42,7 @@ export default function App() {
     return () => {
       unlisten.then(fn => fn())
     }
-  }, [ingest])
+  }, [ingest, refreshIntervalMs, setRefreshInterval, showMenubarStats])
 
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>

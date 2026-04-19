@@ -20,6 +20,7 @@ export interface SettingsState {
   showMinibar: boolean           // show mini usage bar in process table
   compactMode: boolean           // tighter density
   startInTray: boolean           // launch hidden to tray
+  showMenubarStats: boolean      // show CPU / memory percentages in the menubar/tray title when supported
 
   // Thresholds
   cpuWarnThreshold: number
@@ -33,6 +34,7 @@ export interface SettingsState {
   setShowMinibar: (v: boolean) => void
   setCompactMode: (v: boolean) => void
   setStartInTray: (v: boolean) => void
+  setShowMenubarStats: (v: boolean) => void
   setCpuWarnThreshold: (v: number) => void
   setMemWarnThreshold: (v: number) => void
   setDiskWarnThreshold: (v: number) => void
@@ -58,6 +60,7 @@ function persistState(state: Partial<SettingsState>) {
       showMinibar: state.showMinibar,
       compactMode: state.compactMode,
       startInTray: state.startInTray,
+      showMenubarStats: state.showMenubarStats,
       cpuWarnThreshold: state.cpuWarnThreshold,
       memWarnThreshold: state.memWarnThreshold,
       diskWarnThreshold: state.diskWarnThreshold,
@@ -73,6 +76,7 @@ const DEFAULTS = {
   showMinibar: true,
   compactMode: false,
   startInTray: false,
+  showMenubarStats: true,
   cpuWarnThreshold: 80,
   memWarnThreshold: 80,
   diskWarnThreshold: 85,
@@ -109,6 +113,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setStartInTray: (startInTray) => {
     set({ startInTray })
     persistState({ ...get(), startInTray })
+  },
+  setShowMenubarStats: (showMenubarStats) => {
+    set({ showMenubarStats })
+    persistState({ ...get(), showMenubarStats })
   },
   setCpuWarnThreshold: (cpuWarnThreshold) => {
     set({ cpuWarnThreshold })

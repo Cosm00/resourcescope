@@ -60,6 +60,17 @@ export interface ProcessInfo {
   cpu_pct: number
   mem_bytes: number
   status: string
+  parent_pid: number | null
+  parent_name: string | null
+  exe_path: string | null
+  cwd: string | null
+  cmd: string[]
+  user: string | null
+  app_name: string
+  process_kind: string
+  friendly_name: string | null
+  explanation: string | null
+  bundle_hint: string | null
 }
 
 export interface HealthInfo {

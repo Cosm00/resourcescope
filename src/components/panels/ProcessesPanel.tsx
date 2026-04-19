@@ -1,25 +1,31 @@
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import type { ProcessInfo } from '../../types'
 
 const EMPTY_PROCESSES: ProcessInfo[] = []
-type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid'
+type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid' | 'app_name'
+
+function badgeColor(kind: string) {
+  switch (kind) {
+    case 'system-service': return { fg: 'var(--accent-orange)', bg: 'rgba(251,146,60,0.12)' }
+    case 'app-process': return { fg: 'var(--accent-blue)', bg: 'rgba(79,156,249,0.12)' }
+    case 'helper-process': return { fg: 'var(--accent-cyan)', bg: 'rgba(34,211,238,0.12)' }
+    case 'cli-tool': return { fg: 'var(--accent-purple)', bg: 'rgba(168,85,247,0.12)' }
+    default: return { fg: 'var(--text-secondary)', bg: 'rgba(255,255,255,0.06)' }
+  }
+}
 
 function UsageBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const pct = Math.min(100, (value / max) * 100)
+  const pct = Math.min(100, max > 0 ? (value / max) * 100 : 0)
   const barColor = pct > 70 ? 'var(--accent-red)' : pct > 40 ? 'var(--accent-orange)' : color
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs tabular-nums w-10 text-right" style={{ color: 'var(--text-primary)' }}>
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-xs tabular-nums w-12 text-right" style={{ color: 'var(--text-primary)' }}>
         {value.toFixed(1)}%
       </span>
       <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-        <div style={{
-          width: `${pct}%`, height: '100%', borderRadius: 9999,
-          background: barColor,
-          transition: 'width 1.2s cubic-bezier(0.4,0,0.2,1)',
-        }} />
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 9999, background: barColor, transition: 'width 1.2s cubic-bezier(0.4,0,0.2,1)' }} />
       </div>
     </div>
   )
@@ -31,125 +37,145 @@ export default function ProcessesPanel() {
   const [sortKey, setSortKey] = useState<SortKey>('cpu_pct')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [filter, setFilter] = useState('')
+  const [selectedPid, setSelectedPid] = useState<number | null>(null)
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return processes
+    return processes.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      p.app_name.toLowerCase().includes(q) ||
+      (p.friendly_name ?? '').toLowerCase().includes(q) ||
+      (p.parent_name ?? '').toLowerCase().includes(q) ||
+      (p.exe_path ?? '').toLowerCase().includes(q) ||
+      String(p.pid).includes(q)
+    )
+  }, [processes, filter])
 
   const sorted = useMemo(() => {
-    const filtered = filter
-      ? processes.filter(p =>
-          p.name.toLowerCase().includes(filter.toLowerCase()) ||
-          String(p.pid).includes(filter))
-      : processes
-
     return [...filtered].sort((a, b) => {
       const av = a[sortKey] as number | string
       const bv = b[sortKey] as number | string
       const d = av < bv ? -1 : av > bv ? 1 : 0
       return sortDir === 'asc' ? d : -d
     })
-  }, [processes, sortKey, sortDir, filter])
+  }, [filtered, sortKey, sortDir])
 
-  const handleSort = useCallback((key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortKey(key)
-      setSortDir('desc')
-    }
-  }, [sortKey])
+  const selected = useMemo(
+    () => sorted.find(p => p.pid === selectedPid) ?? sorted[0] ?? null,
+    [sorted, selectedPid]
+  )
+
+  const maxCpu = useMemo(() => Math.max(...processes.map(p => p.cpu_pct), 1), [processes])
 
   const COLS: { key: SortKey; label: string; col: string }[] = [
-    { key: 'name', label: 'Process', col: '30%' },
+    { key: 'name', label: 'Process', col: '34%' },
+    { key: 'app_name', label: 'App', col: '20%' },
     { key: 'pid', label: 'PID', col: '10%' },
-    { key: 'cpu_pct', label: 'CPU', col: '30%' },
-    { key: 'mem_bytes', label: 'Memory', col: '30%' },
+    { key: 'cpu_pct', label: 'CPU', col: '18%' },
+    { key: 'mem_bytes', label: 'Memory', col: '18%' },
   ]
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col p-5 gap-4 animate-fade-slide">
-      {/* Header with search */}
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Processes</h1>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {processes.length} running · {sorted.length} shown
+            {processes.length} running · {sorted.length} shown · click a row for “what is this?” details
           </p>
         </div>
         <div className="relative">
           <input
             type="text"
-            placeholder="Filter by name or PID..."
+            placeholder="Filter by process, app, path, or PID..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
             className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none"
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
-              color: 'var(--text-primary)',
-              width: 220,
-            }}
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', width: 280 }}
           />
           <SearchIcon />
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl overflow-hidden flex flex-col flex-1 min-h-0"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        {/* Column headers */}
-        <div className="grid px-5 py-2.5 text-[10px] uppercase tracking-widest flex-shrink-0"
-          style={{
-            gridTemplateColumns: COLS.map(c => c.col).join(' '),
-            color: 'var(--text-muted)',
-            borderBottom: '1px solid var(--border)',
-            background: 'rgba(0,0,0,0.15)',
-          }}>
-          {COLS.map(col => (
-            <button key={col.key} className="text-left flex items-center gap-1"
-              style={{ opacity: sortKey === col.key ? 1 : 0.55 }}
-              onClick={() => handleSort(col.key)}>
-              {col.label}
-              {sortKey === col.key && (
-                <span style={{ color: 'var(--accent-blue)' }}>{sortDir === 'desc' ? '↓' : '↑'}</span>
-              )}
-            </button>
-          ))}
+      <div className="grid grid-cols-[1.8fr_1fr] gap-4 flex-1 min-h-0">
+        <div className="rounded-2xl overflow-hidden flex flex-col min-h-0" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <div className="grid px-5 py-2.5 text-[10px] uppercase tracking-widest flex-shrink-0"
+            style={{ gridTemplateColumns: COLS.map(c => c.col).join(' '), color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.15)' }}>
+            {COLS.map(col => (
+              <button key={col.key} className="text-left flex items-center gap-1" style={{ opacity: sortKey === col.key ? 1 : 0.55 }} onClick={() => {
+                if (sortKey === col.key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+                else { setSortKey(col.key); setSortDir('desc') }
+              }}>
+                {col.label}
+                {sortKey === col.key && <span style={{ color: 'var(--accent-blue)' }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+              </button>
+            ))}
+          </div>
+
+          <div className="overflow-y-auto flex-1">
+            {sorted.map((proc, i) => {
+              const badge = badgeColor(proc.process_kind)
+              const active = selected?.pid === proc.pid
+              return (
+                <button
+                  key={proc.pid}
+                  className="grid px-5 py-3 items-center w-full text-left"
+                  style={{
+                    gridTemplateColumns: COLS.map(c => c.col).join(' '),
+                    borderBottom: i === sorted.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.03)',
+                    background: active ? 'rgba(79,156,249,0.08)' : 'transparent',
+                  }}
+                  onClick={() => setSelectedPid(proc.pid)}>
+                  <div className="min-w-0 pr-3">
+                    <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {proc.friendly_name ?? proc.name}
+                    </div>
+                    <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                      {proc.name}{proc.parent_name ? ` · parent: ${proc.parent_name}` : ''}
+                    </div>
+                  </div>
+                  <div className="min-w-0 pr-3">
+                    <div className="text-xs truncate" style={{ color: 'var(--text-primary)' }}>{proc.app_name}</div>
+                    <span className="inline-flex mt-1 px-1.5 py-0.5 rounded-full text-[10px] uppercase" style={{ color: badge.fg, background: badge.bg }}>
+                      {proc.process_kind.replace('-', ' ')}
+                    </span>
+                  </div>
+                  <span className="text-xs tabular-nums font-mono" style={{ color: 'var(--text-muted)' }}>{proc.pid}</span>
+                  {showMinibar ? <UsageBar value={proc.cpu_pct} max={maxCpu} color="var(--accent-blue)" /> : <span className="text-xs tabular-nums">{proc.cpu_pct.toFixed(1)}%</span>}
+                  <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{fmtBytes(proc.mem_bytes)}</span>
+                </button>
+              )
+            })}
+          </div>
         </div>
 
-        {/* Rows */}
-        <div className="overflow-y-auto flex-1">
-          {sorted.map((proc, i) => (
-            <div key={proc.pid}
-              className="grid px-5 py-2.5 items-center"
-              style={{
-                gridTemplateColumns: COLS.map(c => c.col).join(' '),
-                borderBottom: i === sorted.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.03)',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.025)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              <div className="flex items-center gap-2.5 min-w-0 pr-4">
-                <div className="min-w-0">
-                  <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{proc.name}</div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>PID {proc.pid}</div>
-                </div>
+        <div className="rounded-2xl p-4 overflow-y-auto" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          {selected ? (
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
+                <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selected.app_name}</div>
+                {selected.explanation && (
+                  <p className="text-xs mt-3 leading-5" style={{ color: 'var(--text-muted)' }}>{selected.explanation}</p>
+                )}
               </div>
-              <span className="text-xs tabular-nums font-mono" style={{ color: 'var(--text-muted)' }}>{proc.pid}</span>
-              {showMinibar
-                ? <UsageBar value={proc.cpu_pct} max={50} color="var(--accent-blue)" />
-                : <span className="text-xs tabular-nums" style={{ color: 'var(--text-primary)' }}>{proc.cpu_pct.toFixed(1)}%</span>
-              }
-              <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                {fmtBytes(proc.mem_bytes)}
-              </span>
+
+              <DetailRow label="Process name" value={selected.name} />
+              <DetailRow label="PID" value={String(selected.pid)} />
+              <DetailRow label="Parent" value={selected.parent_name ? `${selected.parent_name}${selected.parent_pid ? ` (PID ${selected.parent_pid})` : ''}` : 'Unknown'} />
+              <DetailRow label="CPU" value={`${selected.cpu_pct.toFixed(1)}%`} />
+              <DetailRow label="Memory" value={fmtBytes(selected.mem_bytes)} />
+              <DetailRow label="Status" value={selected.status} />
+              <DetailRow label="Kind" value={selected.process_kind} />
+              <DetailRow label="Executable" value={selected.exe_path ?? 'Unknown'} mono />
+              <DetailRow label="Working dir" value={selected.cwd ?? 'Unknown'} mono />
+              <DetailRow label="Bundle / app hint" value={selected.bundle_hint ?? 'Unknown'} />
+              <DetailRow label="User" value={selected.user ?? 'Unknown'} />
+              <DetailRow label="Command" value={selected.cmd.length ? selected.cmd.join(' ') : 'Unknown'} mono />
             </div>
-          ))}
-          {!processes.length && (
-            <div className="flex items-center justify-center py-8">
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Waiting for process data...</span>
-            </div>
-          )}
-          {processes.length > 0 && sorted.length === 0 && (
-            <div className="flex items-center justify-center py-8">
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>No processes match "{filter}"</span>
-            </div>
+          ) : (
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>No process selected.</div>
           )}
         </div>
       </div>
@@ -157,12 +183,18 @@ export default function ProcessesPanel() {
   )
 }
 
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className={`text-xs break-words ${mono ? 'font-mono' : ''}`} style={{ color: 'var(--text-primary)' }}>{value}</div>
+    </div>
+  )
+}
+
 function SearchIcon() {
   return (
-    <svg
-      width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"
-      className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-      style={{ color: 'var(--text-muted)' }}>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }}>
       <circle cx="6" cy="6" r="4"/>
       <line x1="9.5" y1="9.5" x2="13" y2="13" strokeLinecap="round"/>
     </svg>

@@ -1,5 +1,7 @@
 use serde::Serialize;
 use sysinfo::{Components, Disks, Networks, System};
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::gpu::{GpuCollector, GpuInfo};
@@ -65,6 +67,17 @@ pub struct ProcessInfo {
     pub cpu_pct: f32,
     pub mem_bytes: u64,
     pub status: String,
+    pub parent_pid: Option<u32>,
+    pub parent_name: Option<String>,
+    pub exe_path: Option<String>,
+    pub cwd: Option<String>,
+    pub cmd: Vec<String>,
+    pub user: Option<String>,
+    pub app_name: String,
+    pub process_kind: String,
+    pub friendly_name: Option<String>,
+    pub explanation: Option<String>,
+    pub bundle_hint: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -203,17 +216,52 @@ impl MetricsCollector {
         ));
 
         // ── Processes ────────────────────────────────────────────────────────
+        let pid_to_name: HashMap<u32, String> = self.sys.processes().values()
+            .map(|p| (p.pid().as_u32(), p.name().to_string_lossy().to_string()))
+            .collect();
+
         let mut processes: Vec<ProcessInfo> = self.sys.processes().values()
-            .map(|p| ProcessInfo {
-                pid: p.pid().as_u32(),
-                name: p.name().to_string_lossy().to_string(),
-                cpu_pct: p.cpu_usage(),
-                mem_bytes: p.memory(),
-                status: format!("{:?}", p.status()),
+            .map(|p| {
+                let pid = p.pid().as_u32();
+                let raw_name = p.name().to_string_lossy().to_string();
+                let parent_pid = p.parent().map(|pp| pp.as_u32());
+                let parent_name = parent_pid.and_then(|pp| pid_to_name.get(&pp).cloned());
+                let exe_path = p.exe().map(|x| x.to_string_lossy().to_string());
+                let cwd = p.cwd().map(|x| x.to_string_lossy().to_string());
+                let cmd: Vec<String> = p.cmd().iter().map(|c| c.to_string_lossy().to_string()).collect();
+                let user = p.user_id().map(|u| format!("{:?}", u));
+                let app_name = infer_app_name(&raw_name, exe_path.as_deref(), parent_name.as_deref(), &cmd);
+                let process_kind = infer_process_kind(&raw_name, exe_path.as_deref(), parent_name.as_deref());
+                let friendly_name = friendly_name_for_process(&raw_name);
+                let explanation = explanation_for_process(&raw_name, parent_name.as_deref(), exe_path.as_deref());
+                let bundle_hint = infer_bundle_hint(exe_path.as_deref(), &cmd);
+
+                ProcessInfo {
+                    pid,
+                    name: raw_name,
+                    cpu_pct: p.cpu_usage(),
+                    mem_bytes: p.memory(),
+                    status: format!("{:?}", p.status()),
+                    parent_pid,
+                    parent_name,
+                    exe_path,
+                    cwd,
+                    cmd,
+                    user,
+                    app_name,
+                    process_kind,
+                    friendly_name,
+                    explanation,
+                    bundle_hint,
+                }
             })
             .collect();
-        processes.sort_by(|a, b| b.cpu_pct.partial_cmp(&a.cpu_pct).unwrap_or(std::cmp::Ordering::Equal));
-        processes.truncate(50);
+        processes.sort_by(|a, b| {
+            b.cpu_pct.partial_cmp(&a.cpu_pct)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.mem_bytes.cmp(&a.mem_bytes))
+        });
+        processes.truncate(80);
 
         // ── Health / Temperatures ─────────────────────────────────────────────
         let cpu_temp: Option<f32> = self.components.iter()
@@ -263,4 +311,89 @@ impl MetricsCollector {
             },
         }
     }
+}
+
+fn infer_process_kind(name: &str, exe_path: Option<&str>, parent_name: Option<&str>) -> String {
+    let lower = name.to_lowercase();
+    let exe = exe_path.unwrap_or("").to_lowercase();
+    let parent = parent_name.unwrap_or("").to_lowercase();
+    if exe.contains("/system/") || exe.contains("/usr/libexec/") || exe.contains("/system/library/") || lower.ends_with('d') {
+        "system-service".to_string()
+    } else if exe.contains(".app/") {
+        "app-process".to_string()
+    } else if parent.ends_with("helper") || parent.contains("helper") || lower.contains("helper") {
+        "helper-process".to_string()
+    } else if exe.starts_with("/opt/homebrew") || exe.starts_with("/usr/local") {
+        "cli-tool".to_string()
+    } else {
+        "background-process".to_string()
+    }
+}
+
+fn infer_app_name(name: &str, exe_path: Option<&str>, parent_name: Option<&str>, cmd: &[String]) -> String {
+    if let Some(path) = exe_path {
+        if let Some(app) = app_name_from_path(path) {
+            return app;
+        }
+    }
+    if let Some(parent) = parent_name {
+        if !parent.is_empty() && parent != name {
+            return parent.to_string();
+        }
+    }
+    if let Some(first) = cmd.first() {
+        if let Some(app) = app_name_from_path(first) {
+            return app;
+        }
+    }
+    friendly_name_for_process(name).unwrap_or_else(|| name.to_string())
+}
+
+fn app_name_from_path(path: &str) -> Option<String> {
+    let p = Path::new(path);
+    let components: Vec<String> = p.iter().map(|s| s.to_string_lossy().to_string()).collect();
+    for part in components {
+        if part.ends_with(".app") {
+            return Some(part.trim_end_matches(".app").to_string());
+        }
+    }
+    None
+}
+
+fn infer_bundle_hint(exe_path: Option<&str>, cmd: &[String]) -> Option<String> {
+    exe_path.and_then(app_name_from_path).or_else(|| cmd.first().and_then(|c| app_name_from_path(c)))
+}
+
+fn friendly_name_for_process(name: &str) -> Option<String> {
+    match name.to_lowercase().as_str() {
+        "mediaanalysisd" => Some("Apple media analysis service".to_string()),
+        "mds" => Some("Spotlight metadata server".to_string()),
+        "mdworker_shared" => Some("Spotlight indexing worker".to_string()),
+        "corespotlightd" => Some("Core Spotlight indexing service".to_string()),
+        "photoanalysisd" => Some("Photos analysis service".to_string()),
+        "cloudd" => Some("iCloud sync service".to_string()),
+        "kernel_task" => Some("macOS kernel task".to_string()),
+        "windowserver" => Some("macOS window compositor".to_string()),
+        "distnoted" => Some("Distributed notifications service".to_string()),
+        _ => None,
+    }
+}
+
+fn explanation_for_process(name: &str, parent_name: Option<&str>, exe_path: Option<&str>) -> Option<String> {
+    let lower = name.to_lowercase();
+    let parent = parent_name.unwrap_or("");
+    let exe = exe_path.unwrap_or("");
+    let msg = match lower.as_str() {
+        "mediaanalysisd" => "Usually triggered by Photos, Spotlight, or macOS media indexing/analysis jobs. High CPU often means the system is scanning or classifying images/video in the background.",
+        "mds" | "mdworker_shared" | "corespotlightd" => "This is part of Spotlight indexing. High CPU or memory usually means files are being indexed or re-indexed.",
+        "photoanalysisd" => "Background photo analysis for the Photos library. Can spike when importing or reprocessing media.",
+        "cloudd" => "Handles iCloud sync. High usage usually means active syncing or conflict resolution.",
+        "kernel_task" => "macOS kernel process. High CPU here can sometimes indicate thermal throttling or drivers pushing work into the kernel.",
+        "windowserver" => "Draws the macOS UI. High usage often comes from many windows, displays, animations, or screen capture apps.",
+        _ if exe.contains(".app/") => "This process belongs to a desktop app bundle. Open details to inspect the bundle/app path and parent process.",
+        _ if lower.ends_with('d') => "This looks like a background daemon/service. Check the parent process and executable path for attribution.",
+        _ if !parent.is_empty() => return Some(format!("Likely related to parent process: {parent}.")),
+        _ => return None,
+    };
+    Some(msg.to_string())
 }
