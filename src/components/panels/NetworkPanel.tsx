@@ -76,6 +76,15 @@ export default function NetworkPanel() {
         <InsightCard title="Average Upload" name="Recent history" primary={fmtBps(avgUpload * 1000)} secondary="Average across the current chart buffer" accent="var(--accent-purple)" />
       </div>
 
+      <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Network posture</div>
+        <div className="grid grid-cols-3 gap-3">
+          <InsightCard title="Total Receive" name="All interfaces" primary={fmtTotalBytes(nets.reduce((a, n) => a + n.bytes_recv, 0))} secondary="Cumulative bytes received since app start" accent="var(--accent-cyan)" />
+          <InsightCard title="Total Sent" name="All interfaces" primary={fmtTotalBytes(nets.reduce((a, n) => a + n.bytes_sent, 0))} secondary="Cumulative bytes sent since app start" accent="var(--accent-orange)" />
+          <InsightCard title="Most Active Link" name={(busiestDownload?.recv_bps ?? 0) + (busiestUpload?.sent_bps ?? 0) > 0 ? (busiestDownload?.recv_bps ?? 0) >= (busiestUpload?.sent_bps ?? 0) ? busiestDownload?.name ?? '—' : busiestUpload?.name ?? '—' : '—'} primary={fmtBps(Math.max(busiestDownload?.recv_bps ?? 0, busiestUpload?.sent_bps ?? 0))} secondary="Fastest single-direction interface right now" accent="var(--accent-green)" />
+        </div>
+      </div>
+
       <div className="rounded-2xl overflow-hidden flex flex-col" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Network Interfaces</h3>

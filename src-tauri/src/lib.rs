@@ -71,6 +71,26 @@ fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
 }
 
 #[tauri::command]
+fn terminate_process(pid: u32, force: bool, state: tauri::State<CollectorState>) -> Result<(), String> {
+    use sysinfo::{Pid, ProcessesToUpdate, Signal};
+
+    let mut collector = state.lock().map_err(|_| "collector lock poisoned".to_string())?;
+    collector.system.refresh_processes(ProcessesToUpdate::All, true);
+
+    let proc = collector
+        .system
+        .process(Pid::from_u32(pid))
+        .ok_or_else(|| format!("Process {pid} not found"))?;
+
+    let signal = if force { Signal::Kill } else { Signal::Term };
+    match proc.kill_with(signal) {
+        Some(true) => Ok(()),
+        Some(false) => Err(format!("Failed to send {:?} to process {pid}", signal)),
+        None => Err(format!("Signal {:?} is not supported on this platform", signal)),
+    }
+}
+
+#[tauri::command]
 fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     show_main_window(&app).map_err(|e| e.to_string())
 }
@@ -277,6 +297,7 @@ pub fn run() {
             set_menubar_mode,
             set_menubar_refresh_interval,
             scan_disk_directory,
+            terminate_process,
             show_main_window_command,
             toggle_main_window_command
         ])

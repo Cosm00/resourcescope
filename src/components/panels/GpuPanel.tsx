@@ -37,8 +37,14 @@ export default function GpuPanel() {
           <div className="grid grid-cols-2 gap-4">
             <DetailTile label="GPU Name" value={gpu.name} />
             <DetailTile label="Platform" value={gpu.platform} />
+            <DetailTile label="Vendor" value={gpu.vendor || 'Unknown'} />
             <DetailTile label="Core Count" value={gpu.core_count ? String(gpu.core_count) : 'Unknown'} />
+            <DetailTile label="Collection Method" value={gpu.collection_method} />
             <DetailTile label="Memory Usage" value={`${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB`} />
+            <DetailTile label="Renderer Load" value={gpu.renderer_utilization_pct !== null ? `${gpu.renderer_utilization_pct.toFixed(1)}%` : 'Unknown'} />
+            <DetailTile label="Tiler Load" value={gpu.tiler_utilization_pct !== null ? `${gpu.tiler_utilization_pct.toFixed(1)}%` : 'Unknown'} />
+            <DetailTile label="Last Submission PID" value={gpu.last_submission_pid !== null ? String(gpu.last_submission_pid) : 'Unknown'} />
+            <DetailTile label="Power State" value={gpu.power_state !== null ? String(gpu.power_state) : 'Unknown'} />
           </div>
         ) : (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No GPU metrics are available right now on this machine.</p>

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import type { ProcessInfo } from '../../types'
@@ -38,6 +39,8 @@ export default function ProcessesPanel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [filter, setFilter] = useState('')
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
+  const [busyAction, setBusyAction] = useState<'quit' | 'force' | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -67,6 +70,19 @@ export default function ProcessesPanel() {
   )
 
   const maxCpu = useMemo(() => Math.max(...processes.map(p => p.cpu_pct), 1), [processes])
+
+  const handleTerminate = async (force: boolean) => {
+    if (!selected) return
+    setActionError(null)
+    setBusyAction(force ? 'force' : 'quit')
+    try {
+      await invoke('terminate_process', { pid: selected.pid, force })
+    } catch (err) {
+      setActionError(String(err))
+    } finally {
+      setBusyAction(null)
+    }
+  }
 
   const COLS: { key: SortKey; label: string; col: string }[] = [
     { key: 'name', label: 'Process', col: '34%' },
@@ -154,10 +170,35 @@ export default function ProcessesPanel() {
           {selected ? (
             <div className="flex flex-col gap-4">
               <div>
-                <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
-                <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selected.app_name}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
+                    <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selected.app_name}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => handleTerminate(false)}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold"
+                      style={{ background: 'rgba(251,146,60,0.10)', color: 'var(--accent-orange)', border: '1px solid rgba(251,146,60,0.18)', opacity: busyAction ? 0.7 : 1 }}>
+                      {busyAction === 'quit' ? 'Quitting…' : 'Quit'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => handleTerminate(true)}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold"
+                      style={{ background: 'rgba(248,113,113,0.10)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.18)', opacity: busyAction ? 0.7 : 1 }}>
+                      {busyAction === 'force' ? 'Force quitting…' : 'Force quit'}
+                    </button>
+                  </div>
+                </div>
                 {selected.explanation && (
                   <p className="text-xs mt-3 leading-5" style={{ color: 'var(--text-muted)' }}>{selected.explanation}</p>
+                )}
+                {actionError && (
+                  <p className="text-xs mt-3 leading-5" style={{ color: 'var(--accent-red)' }}>{actionError}</p>
                 )}
               </div>
 
@@ -166,6 +207,7 @@ export default function ProcessesPanel() {
               <DetailRow label="Parent" value={selected.parent_name ? `${selected.parent_name}${selected.parent_pid ? ` (PID ${selected.parent_pid})` : ''}` : 'Unknown'} />
               <DetailRow label="CPU" value={`${selected.cpu_pct.toFixed(1)}%`} />
               <DetailRow label="Memory" value={fmtBytes(selected.mem_bytes)} />
+              <DetailRow label="Resource pressure" value={selected.cpu_pct > 70 ? 'CPU-heavy right now' : selected.mem_bytes > 2_000_000_000 ? 'Memory-heavy right now' : 'Normal'} />
               <DetailRow label="Status" value={selected.status} />
               <DetailRow label="Kind" value={selected.process_kind} />
               <DetailRow label="Executable" value={selected.exe_path ?? 'Unknown'} mono />
@@ -173,6 +215,12 @@ export default function ProcessesPanel() {
               <DetailRow label="Bundle / app hint" value={selected.bundle_hint ?? 'Unknown'} />
               <DetailRow label="User" value={selected.user ?? 'Unknown'} />
               <DetailRow label="Command" value={selected.cmd.length ? selected.cmd.join(' ') : 'Unknown'} mono />
+              <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>What can I do here?</div>
+                <div className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>
+                  Use <strong>Quit</strong> for a polite termination attempt. Use <strong>Force quit</strong> when the app is hung, unresponsive, or ignoring normal shutdown.
+                </div>
+              </div>
             </div>
           ) : (
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>No process selected.</div>
