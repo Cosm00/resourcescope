@@ -70,24 +70,55 @@ fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
     Ok(scan_directory_usage(&path))
 }
 
+#[cfg(unix)]
+fn terminate_process_impl(pid: u32, force: bool) -> Result<(), String> {
+    let signal = if force { "-9" } else { "-15" };
+    let status = std::process::Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status()
+        .map_err(|e| format!("Failed to execute kill: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("kill exited with status {status}"))
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process_impl(pid: u32, force: bool) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("taskkill");
+    cmd.args(["/PID", &pid.to_string()]);
+    if force {
+        cmd.arg("/F");
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("Failed to execute taskkill: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill exited with status {status}"))
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process_impl(_pid: u32, _force: bool) -> Result<(), String> {
+    Err("Process termination is not supported on this platform".to_string())
+}
+
 #[tauri::command]
 fn terminate_process(pid: u32, force: bool, state: tauri::State<CollectorState>) -> Result<(), String> {
-    use sysinfo::{Pid, ProcessesToUpdate, Signal};
+    use sysinfo::{Pid, ProcessesToUpdate};
 
     let mut collector = state.lock().map_err(|_| "collector lock poisoned".to_string())?;
     collector.system.refresh_processes(ProcessesToUpdate::All, true);
 
-    let proc = collector
+    collector
         .system
         .process(Pid::from_u32(pid))
         .ok_or_else(|| format!("Process {pid} not found"))?;
 
-    let signal = if force { Signal::Kill } else { Signal::Term };
-    match proc.kill_with(signal) {
-        Some(true) => Ok(()),
-        Some(false) => Err(format!("Failed to send {:?} to process {pid}", signal)),
-        None => Err(format!("Signal {:?} is not supported on this platform", signal)),
-    }
+    terminate_process_impl(pid, force)
 }
 
 #[tauri::command]
