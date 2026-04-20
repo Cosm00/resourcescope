@@ -61,7 +61,7 @@ export default function App() {
 
         <div className="flex-1 flex overflow-hidden">
           {activeNav === 'overview' && <Dashboard onNavigate={setActiveNav} />}
-          {activeNav === 'gpu'      && <Dashboard />}
+          {activeNav === 'gpu'      && <CpuPanel />}
           {activeNav === 'cpu'      && <CpuPanel />}
           {activeNav === 'memory'   && <MemoryPanel />}
           {activeNav === 'disk'     && <DiskPanel />}

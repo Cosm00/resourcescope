@@ -3,6 +3,7 @@ import { useMetricsStore } from '../../store/metricsStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import Sparkline from '../Sparkline'
 import GaugeRing from '../GaugeRing'
+import TopProcessesPanel from '../TopProcessesPanel'
 
 function coreColor(pct: number): string {
   if (pct > 80) return 'var(--accent-red)'
@@ -103,6 +104,12 @@ export default function CpuPanel() {
           </div>
         )}
       </div>
+
+      <TopProcessesPanel
+        title="Top CPU Processes"
+        subtitle="Processes currently using the most CPU time"
+        mode="cpu"
+      />
 
       {/* Load average */}
       <div className="rounded-2xl p-5 flex flex-col gap-3"

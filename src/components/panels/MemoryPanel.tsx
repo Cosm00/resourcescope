@@ -2,6 +2,7 @@ import React from 'react'
 import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
 import Sparkline from '../Sparkline'
 import GaugeRing from '../GaugeRing'
+import TopProcessesPanel from '../TopProcessesPanel'
 
 export default function MemoryPanel() {
   const snapshot = useMetricsStore(s => s.snapshot)
@@ -83,6 +84,12 @@ export default function MemoryPanel() {
           <span>{memTotal.toFixed(0)} GB</span>
         </div>
       </div>
+
+      <TopProcessesPanel
+        title="Top Memory Processes"
+        subtitle="Processes currently holding the most memory"
+        mode="memory"
+      />
 
       {/* Swap */}
       <div className="rounded-2xl p-5 flex flex-col gap-4"

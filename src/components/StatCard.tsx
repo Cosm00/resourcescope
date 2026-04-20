@@ -34,11 +34,12 @@ const StatCard = React.memo(function StatCard({
     color: pct && pct > 80 ? 'var(--accent-red)' : pct && pct > 60 ? 'var(--accent-orange)' : color,
   }), [pct, color])
 
+  const visibleTags = tags.slice(0, 3)
+
   return (
     <div onClick={onClick}
-      className="rounded-2xl p-4 flex flex-col gap-3 cursor-pointer"
-      style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
-        transition: 'background 0.15s, border-color 0.15s, transform 0.15s', willChange: 'transform' }}
+      className="rounded-2xl p-4 flex flex-col cursor-pointer h-[245px]"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', transition: 'background 0.15s, border-color 0.15s, transform 0.15s', willChange: 'transform' }}
       onMouseEnter={e => {
         e.currentTarget.style.background = 'var(--bg-card-hover)'
         e.currentTarget.style.borderColor = `${color}40`
@@ -49,25 +50,23 @@ const StatCard = React.memo(function StatCard({
         e.currentTarget.style.borderColor = 'var(--border)'
         e.currentTarget.style.transform = 'translateY(0)'
       }}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0"
-            style={{ background: `${color}20`, color }}>
+      <div className="flex items-center justify-between min-h-[32px]">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0" style={{ background: `${color}20`, color }}>
             {icon}
           </div>
-          <span className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-xs font-medium tracking-wide uppercase truncate" style={{ color: 'var(--text-muted)' }}>
             {title}
           </span>
         </div>
         {pct !== null && (
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={badgeStyle}>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={badgeStyle}>
             {Math.round(pct)}%
           </span>
         )}
       </div>
-      {/* Value */}
-      <div className="flex items-center justify-between gap-2">
+
+      <div className="flex items-center justify-between gap-2 min-h-[78px] mt-3">
         <div className="min-w-0">
           <div className="flex items-baseline gap-1">
             <span className="text-2xl font-bold tracking-tight tabular-nums" style={{ color: 'var(--text-primary)' }}>
@@ -75,31 +74,34 @@ const StatCard = React.memo(function StatCard({
             </span>
             {unit && <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{unit}</span>}
           </div>
-          {subValue !== undefined && (
-            <div className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-              {subLabel}: <span style={{ color }}>{subValue}</span>
-            </div>
-          )}
+          <div className="text-xs mt-1 min-h-[18px]" style={{ color: 'var(--text-secondary)' }}>
+            {subValue !== undefined ? (
+              <>
+                {subLabel}: <span style={{ color }}>{subValue}</span>
+              </>
+            ) : <span>&nbsp;</span>}
+          </div>
         </div>
-        {pct !== null && <GaugeRing value={pct} size={64} strokeWidth={6} color={gaugeColor} />}
+        <div className="w-[68px] flex justify-end flex-shrink-0">
+          {pct !== null ? <GaugeRing value={pct} size={64} strokeWidth={6} color={gaugeColor} /> : null}
+        </div>
       </div>
-      {/* Tags */}
-      {tags.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap">
-          {tags.map((tag, i) => (
-            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-      {/* Sparkline */}
-      {history && (
-        <div className="mt-auto overflow-hidden rounded-lg">
-          <Sparkline data={history} color={color} height={36} width={200} />
-        </div>
-      )}
+
+      <div className="min-h-[42px] mt-2">
+        {visibleTags.length > 0 ? (
+          <div className="flex gap-1.5 flex-wrap">
+            {visibleTags.map((tag, i) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full max-w-full truncate" style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-auto min-h-[42px] overflow-hidden rounded-lg">
+        {history ? <Sparkline data={history} color={color} height={36} width={200} /> : null}
+      </div>
     </div>
   )
 })
