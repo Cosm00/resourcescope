@@ -215,8 +215,11 @@ export default function SettingsPanel() {
 
         {/* Window */}
         <Section title="Window">
-          <Row label="Start in Tray" description="Launch hidden to system tray on startup" last>
+          <Row label="Start in Tray" description="Launch hidden to system tray on startup">
             <Toggle checked={s.startInTray} onChange={s.setStartInTray} />
+          </Row>
+          <Row label="Show Menubar Stats" description="Display live CPU and memory percentages in the tray / menubar title when supported" last>
+            <Toggle checked={s.showMenubarStats} onChange={s.setShowMenubarStats} />
           </Row>
         </Section>
 
