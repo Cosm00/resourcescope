@@ -102,7 +102,7 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 If you find ResourceScope useful, you can support development here:
 
 - **GitHub Sponsors:** https://github.com/sponsors/Cosm00
-- **Ko-fi:** https://ko-fi.com/popfindr
+- **Ko-fi:** https://ko-fi.com/cosm00
 
 ## Contributing
 
