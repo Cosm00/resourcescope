@@ -1,3 +1,15 @@
+## [1.0.1] - 2026-04-19
+
+### Added
+- Richer process attribution with app name, parent process, executable path, bundle hints, and friendly explanations for common macOS daemons.
+- Clickable overview cards that jump directly into CPU, Memory, GPU, Network, and Disk deep-dive tabs.
+- Menubar/tray metric customization with selectable display mode and independent refresh interval.
+- Disk storage examiner with on-demand top-level path scanning and per-volume usage contribution.
+
+### Improved
+- Processes panel now provides a detailed inspector view for understanding what a process is and what likely owns it.
+- Settings now expose menubar stats controls directly in the UI.
+
 # Changelog
 
 All notable changes to ResourceScope will be documented here.
