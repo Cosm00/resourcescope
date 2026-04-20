@@ -17,7 +17,7 @@ type CollectorState = Arc<Mutex<MetricsCollector>>;
 type IntervalState = Arc<AtomicU64>;
 type MenubarStatsState = Arc<std::sync::atomic::AtomicBool>;
 type MenubarModeState = Arc<Mutex<String>>;
-type MenubarIntervalState = Arc<AtomicU64>;
+struct MenubarIntervalState(Arc<AtomicU64>);
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "resourcescope-tray";
@@ -61,7 +61,7 @@ fn set_menubar_mode(mode: String, state: tauri::State<MenubarModeState>) -> Resu
 
 #[tauri::command]
 fn set_menubar_refresh_interval(interval_ms: u64, state: tauri::State<MenubarIntervalState>) -> Result<(), String> {
-    state.store(interval_ms.clamp(500, 10_000), Ordering::Relaxed);
+    state.0.store(interval_ms.clamp(500, 10_000), Ordering::Relaxed);
     Ok(())
 }
 
@@ -210,7 +210,7 @@ fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: Int
             }
 
             menubar_tick = menubar_tick.saturating_add(initial_ms.max(1));
-            let menubar_ms = menubar_interval_state.load(Ordering::Relaxed);
+            let menubar_ms = menubar_interval_state.0.load(Ordering::Relaxed);
 
             if menubar_stats_state.load(Ordering::Relaxed) && menubar_tick >= menubar_ms {
                 menubar_tick = 0;
@@ -259,8 +259,8 @@ pub fn run() {
     let menubar_stats_for_loop = Arc::clone(&menubar_stats_state);
     let menubar_mode_state: MenubarModeState = Arc::new(Mutex::new("cpu_mem".to_string()));
     let menubar_mode_for_loop = Arc::clone(&menubar_mode_state);
-    let menubar_interval_state: MenubarIntervalState = Arc::new(AtomicU64::new(1500));
-    let menubar_interval_for_loop = Arc::clone(&menubar_interval_state);
+    let menubar_interval_state = MenubarIntervalState(Arc::new(AtomicU64::new(1500)));
+    let menubar_interval_for_loop = MenubarIntervalState(Arc::clone(&menubar_interval_state.0));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
