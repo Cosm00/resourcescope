@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 
 export type RefreshInterval = 500 | 1000 | 1500 | 2000 | 3000 | 5000
+export type MenubarMode = 'cpu' | 'memory' | 'cpu_mem' | 'network' | 'disk'
 
 export interface SettingsState {
   // Display
@@ -21,6 +22,8 @@ export interface SettingsState {
   compactMode: boolean           // tighter density
   startInTray: boolean           // launch hidden to tray
   showMenubarStats: boolean      // show CPU / memory percentages in the menubar/tray title when supported
+  menubarMode: MenubarMode       // which metrics to show in the tray/menubar title
+  menubarRefreshIntervalMs: RefreshInterval
 
   // Thresholds
   cpuWarnThreshold: number
@@ -35,6 +38,8 @@ export interface SettingsState {
   setCompactMode: (v: boolean) => void
   setStartInTray: (v: boolean) => void
   setShowMenubarStats: (v: boolean) => void
+  setMenubarMode: (v: MenubarMode) => void
+  setMenubarRefreshInterval: (v: RefreshInterval) => void
   setCpuWarnThreshold: (v: number) => void
   setMemWarnThreshold: (v: number) => void
   setDiskWarnThreshold: (v: number) => void
@@ -61,6 +66,8 @@ function persistState(state: Partial<SettingsState>) {
       compactMode: state.compactMode,
       startInTray: state.startInTray,
       showMenubarStats: state.showMenubarStats,
+      menubarMode: state.menubarMode,
+      menubarRefreshIntervalMs: state.menubarRefreshIntervalMs,
       cpuWarnThreshold: state.cpuWarnThreshold,
       memWarnThreshold: state.memWarnThreshold,
       diskWarnThreshold: state.diskWarnThreshold,
@@ -77,6 +84,8 @@ const DEFAULTS = {
   compactMode: false,
   startInTray: false,
   showMenubarStats: true,
+  menubarMode: 'cpu_mem' as MenubarMode,
+  menubarRefreshIntervalMs: 1500 as RefreshInterval,
   cpuWarnThreshold: 80,
   memWarnThreshold: 80,
   diskWarnThreshold: 85,
@@ -117,6 +126,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setShowMenubarStats: (showMenubarStats) => {
     set({ showMenubarStats })
     persistState({ ...get(), showMenubarStats })
+    invoke('set_show_menubar_stats', { show: showMenubarStats }).catch(() => {})
+  },
+  setMenubarMode: (menubarMode) => {
+    set({ menubarMode })
+    persistState({ ...get(), menubarMode })
+    invoke('set_menubar_mode', { mode: menubarMode }).catch(() => {})
+  },
+  setMenubarRefreshInterval: (menubarRefreshIntervalMs) => {
+    set({ menubarRefreshIntervalMs })
+    persistState({ ...get(), menubarRefreshIntervalMs })
+    invoke('set_menubar_refresh_interval', { intervalMs: menubarRefreshIntervalMs }).catch(() => {})
   },
   setCpuWarnThreshold: (cpuWarnThreshold) => {
     set({ cpuWarnThreshold })

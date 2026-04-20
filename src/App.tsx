@@ -19,6 +19,8 @@ export default function App() {
   const ingest = useMetricsStore(s => s.ingestSnapshot)
   const refreshIntervalMs = useSettingsStore(s => s.refreshIntervalMs)
   const showMenubarStats = useSettingsStore(s => s.showMenubarStats)
+  const menubarMode = useSettingsStore(s => s.menubarMode)
+  const menubarRefreshIntervalMs = useSettingsStore(s => s.menubarRefreshIntervalMs)
   const setRefreshInterval = useSettingsStore(s => s.setRefreshInterval)
 
   useEffect(() => {
@@ -34,6 +36,12 @@ export default function App() {
     invoke('set_show_menubar_stats', { show: showMenubarStats }).catch(err =>
       console.warn('[ResourceScope] Menubar stats toggle failed:', err),
     )
+    invoke('set_menubar_mode', { mode: menubarMode }).catch(err =>
+      console.warn('[ResourceScope] Menubar mode failed:', err),
+    )
+    invoke('set_menubar_refresh_interval', { intervalMs: menubarRefreshIntervalMs }).catch(err =>
+      console.warn('[ResourceScope] Menubar refresh interval failed:', err),
+    )
 
     const unlisten = listen<MetricsSnapshot>('metrics_update', (event) => {
       ingest(event.payload)
@@ -42,7 +50,7 @@ export default function App() {
     return () => {
       unlisten.then(fn => fn())
     }
-  }, [ingest, refreshIntervalMs, setRefreshInterval, showMenubarStats])
+  }, [ingest, refreshIntervalMs, setRefreshInterval, showMenubarStats, menubarMode, menubarRefreshIntervalMs])
 
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
@@ -52,7 +60,7 @@ export default function App() {
         <TopBar />
 
         <div className="flex-1 flex overflow-hidden">
-          {activeNav === 'overview' && <Dashboard />}
+          {activeNav === 'overview' && <Dashboard onNavigate={setActiveNav} />}
           {activeNav === 'gpu'      && <Dashboard />}
           {activeNav === 'cpu'      && <CpuPanel />}
           {activeNav === 'memory'   && <MemoryPanel />}

@@ -2,7 +2,6 @@ import React from 'react'
 import { useMetricsStore, fmtBytes, fmtBps } from '../store/metricsStore'
 import type { DiskInfo } from '../types'
 
-// Stable empty arrays — prevents infinite re-render from `?? []` in selectors
 const EMPTY_DISKS: DiskInfo[] = []
 import StatCard from './StatCard'
 import CoreGrid from './CoreGrid'
@@ -10,8 +9,24 @@ import NetworkCard from './NetworkCard'
 import ProcessTable from './ProcessTable'
 import HealthPanel from './HealthPanel'
 
-export default function Dashboard() {
-  // Fast scalars — each selector is independent
+type DashboardProps = {
+  onNavigate?: (tab: string) => void
+}
+
+function ClickableCard({ onClick, children }: { onClick?: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-left rounded-[20px] transition-all duration-150 hover:scale-[1.01]"
+      style={{ background: 'transparent' }}
+    >
+      {children}
+    </button>
+  )
+}
+
+export default function Dashboard({ onNavigate }: DashboardProps) {
   const cpuPct    = useMetricsStore(s => s.cpuPct)
   const cpuTemp   = useMetricsStore(s => s.cpuTemp)
   const cpuCores  = useMetricsStore(s => s.snapshot?.cpu.core_count ?? 0)
@@ -34,7 +49,6 @@ export default function Dashboard() {
   const disks     = useMetricsStore(s => s.snapshot?.disks ?? EMPTY_DISKS)
   const primaryDisk = disks[0]
 
-  // Slow histories — stable refs between fast ticks
   const cpuHistory = useMetricsStore(s => s.cpuHistory)
   const memHistory = useMetricsStore(s => s.memHistory)
   const gpuHistory = useMetricsStore(s => s.gpuHistory)
@@ -43,68 +57,72 @@ export default function Dashboard() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 flex gap-4 min-h-0">
-      {/* Main column */}
       <div className="flex-1 flex flex-col gap-4 min-w-0">
-        {/* Stat cards */}
         <div className="grid grid-cols-5 gap-3">
-          <StatCard
-            title="CPU" icon={<CpuSvg />} color="#4f9cf9"
-            value={cpuPct.toFixed(1)} unit="%"
-            subValue={cpuTemp !== null ? `${cpuTemp?.toFixed(0)}°C` : undefined}
-            subLabel="Temp"
-            gaugeValue={cpuPct}
-            tags={[`${cpuCores} cores`, `${cpuFreqGhz} GHz`]}
-            history={cpuHistory}
-          />
-          <StatCard
-            title="Memory" icon={<MemSvg />} color="#a78bfa"
-            value={memUsed.toFixed(1)} unit="GB"
-            subValue={`${memTotal.toFixed(1)} GB`} subLabel="Total"
-            gaugeValue={memPct}
-            tags={[`${(memTotal - memUsed).toFixed(1)} GB free`]}
-            history={memHistory}
-          />
-          <StatCard
-            title="GPU" icon={<GpuSvg />} color="#f472b6"
-            value={gpu ? gpuPct.toFixed(0) : '—'} unit={gpu ? '%' : ''}
-            subValue={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : gpu ? `${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB` : undefined}
-            subLabel={gpuTemp !== null ? 'Temp' : gpu ? 'Unified mem' : undefined}
-            gaugeValue={gpu ? gpuPct : undefined}
-            tags={gpu ? [gpu.name, gpu.core_count ? `${gpu.core_count} cores` : gpu.platform] : ['Unavailable']}
-            history={gpu ? gpuHistory : undefined}
-          />
-          <StatCard
-            title="Network ↓" icon={<NetSvg />} color="#00d4aa"
-            value={fmtBps(netRecv)} unit=""
-            subValue={fmtBps(netSent)} subLabel="↑ Up"
-            gaugeValue={null!}
-            tags={[]}
-          />
-          {primaryDisk ? (
+          <ClickableCard onClick={() => onNavigate?.('cpu')}>
             <StatCard
-              title="Disk" icon={<DiskSvg />} color="#fb923c"
-              value={primaryDisk.usage_pct.toFixed(0)} unit="%"
-              subValue={fmtBytes(primaryDisk.available_bytes)} subLabel="Free"
-              gaugeValue={primaryDisk.usage_pct}
-              tags={[primaryDisk.mount_point, primaryDisk.fs_type]}
+              title="CPU" icon={<CpuSvg />} color="#4f9cf9"
+              value={cpuPct.toFixed(1)} unit="%"
+              subValue={cpuTemp !== null ? `${cpuTemp?.toFixed(0)}°C` : undefined}
+              subLabel="Temp"
+              gaugeValue={cpuPct}
+              tags={[`${cpuCores} cores`, `${cpuFreqGhz} GHz`, 'Click for deep dive']}
+              history={cpuHistory}
             />
-          ) : (
-            <StatCard title="Disk" icon={<DiskSvg />} color="#fb923c"
-              value="—" unit="" gaugeValue={0} />
-          )}
+          </ClickableCard>
+          <ClickableCard onClick={() => onNavigate?.('memory')}>
+            <StatCard
+              title="Memory" icon={<MemSvg />} color="#a78bfa"
+              value={memUsed.toFixed(1)} unit="GB"
+              subValue={`${memTotal.toFixed(1)} GB`} subLabel="Total"
+              gaugeValue={memPct}
+              tags={[`${(memTotal - memUsed).toFixed(1)} GB free`, 'Click for deep dive']}
+              history={memHistory}
+            />
+          </ClickableCard>
+          <ClickableCard onClick={() => onNavigate?.('gpu')}>
+            <StatCard
+              title="GPU" icon={<GpuSvg />} color="#f472b6"
+              value={gpu ? gpuPct.toFixed(0) : '—'} unit={gpu ? '%' : ''}
+              subValue={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : gpu ? `${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB` : undefined}
+              subLabel={gpuTemp !== null ? 'Temp' : gpu ? 'Unified mem' : undefined}
+              gaugeValue={gpu ? gpuPct : undefined}
+              tags={gpu ? [gpu.name, gpu.core_count ? `${gpu.core_count} cores` : gpu.platform, 'Click for deep dive'] : ['Unavailable']}
+              history={gpu ? gpuHistory : undefined}
+            />
+          </ClickableCard>
+          <ClickableCard onClick={() => onNavigate?.('network')}>
+            <StatCard
+              title="Network ↓" icon={<NetSvg />} color="#00d4aa"
+              value={fmtBps(netRecv)} unit=""
+              subValue={fmtBps(netSent)} subLabel="↑ Up"
+              gaugeValue={null!}
+              tags={['Click for deep dive']}
+            />
+          </ClickableCard>
+          <ClickableCard onClick={() => onNavigate?.('disk')}>
+            {primaryDisk ? (
+              <StatCard
+                title="Disk" icon={<DiskSvg />} color="#fb923c"
+                value={primaryDisk.usage_pct.toFixed(0)} unit="%"
+                subValue={fmtBytes(primaryDisk.available_bytes)} subLabel="Free"
+                gaugeValue={primaryDisk.usage_pct}
+                tags={[primaryDisk.mount_point, primaryDisk.fs_type, 'Click for storage examiner']}
+              />
+            ) : (
+              <StatCard title="Disk" icon={<DiskSvg />} color="#fb923c" value="—" unit="" gaugeValue={0} />
+            )}
+          </ClickableCard>
         </div>
 
-        {/* Core grid + Network */}
         <div className="grid grid-cols-3 gap-3" style={{ minHeight: 0, height: 160 }}>
           <div className="col-span-2 min-h-0"><CoreGrid /></div>
           <NetworkCard />
         </div>
 
-        {/* Processes */}
         <ProcessTable />
       </div>
 
-      {/* Health sidebar */}
       <div className="w-[220px] flex-shrink-0 overflow-hidden">
         <HealthPanel />
       </div>

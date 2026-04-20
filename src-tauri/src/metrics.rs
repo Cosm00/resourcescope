@@ -1,7 +1,8 @@
 use serde::Serialize;
 use sysinfo::{Components, Disks, Networks, System};
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::gpu::{GpuCollector, GpuInfo};
@@ -85,6 +86,23 @@ pub struct HealthInfo {
     pub cpu_temp: Option<f32>,
     pub gpu_temp: Option<f32>,
     pub overall: String, // "good" | "warn" | "critical"
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct DirectoryUsage {
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub usage_pct_of_parent: f32,
+    pub is_dir: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct DiskScanResult {
+    pub root_path: String,
+    pub total_bytes: u64,
+    pub scanned_entries: usize,
+    pub children: Vec<DirectoryUsage>,
 }
 
 // ─── Collector state ─────────────────────────────────────────────────────────
@@ -396,4 +414,78 @@ fn explanation_for_process(name: &str, parent_name: Option<&str>, exe_path: Opti
         _ => return None,
     };
     Some(msg.to_string())
+}
+
+fn dir_size_limited(path: &Path, depth: usize) -> u64 {
+    if depth == 0 {
+        return 0;
+    }
+    let mut total = 0u64;
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.is_file() {
+            return meta.len();
+        }
+    }
+    if let Ok(read_dir) = fs::read_dir(path) {
+        for entry in read_dir.flatten() {
+            let child = entry.path();
+            if let Ok(meta) = fs::symlink_metadata(&child) {
+                if meta.is_file() {
+                    total = total.saturating_add(meta.len());
+                } else if meta.is_dir() {
+                    total = total.saturating_add(dir_size_limited(&child, depth - 1));
+                }
+            }
+        }
+    }
+    total
+}
+
+pub fn scan_directory_usage(root_path: &str) -> DiskScanResult {
+    let root = PathBuf::from(root_path);
+    let mut children = Vec::new();
+    let mut total_bytes = 0u64;
+
+    if let Ok(read_dir) = fs::read_dir(&root) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                let is_dir = meta.is_dir();
+                let bytes = if meta.is_file() {
+                    meta.len()
+                } else if is_dir {
+                    dir_size_limited(&path, 3)
+                } else {
+                    0
+                };
+                total_bytes = total_bytes.saturating_add(bytes);
+                children.push(DirectoryUsage {
+                    path: path.to_string_lossy().to_string(),
+                    name,
+                    bytes,
+                    usage_pct_of_parent: 0.0,
+                    is_dir,
+                });
+            }
+        }
+    }
+
+    for child in &mut children {
+        child.usage_pct_of_parent = if total_bytes > 0 {
+            (child.bytes as f32 / total_bytes as f32) * 100.0
+        } else {
+            0.0
+        };
+    }
+
+    children.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    children.truncate(40);
+
+    DiskScanResult {
+        root_path: root.to_string_lossy().to_string(),
+        total_bytes,
+        scanned_entries: children.len(),
+        children,
+    }
 }
