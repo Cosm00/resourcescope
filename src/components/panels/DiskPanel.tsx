@@ -180,14 +180,21 @@ export default function DiskPanel() {
                   Scanned {scanResult.scanned_entries} top entries under {scanResult.root_path}
                 </div>
                 {scanResult.children.map(entry => (
-                  <div key={entry.path} className="flex items-center gap-3 px-3 py-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="min-w-[220px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{entry.name}</div>
+                  <button
+                    key={entry.path}
+                    type="button"
+                    onClick={() => entry.is_dir && runScan(entry.path)}
+                    className="flex items-center gap-3 px-3 py-2 rounded-xl text-left"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="min-w-[220px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {entry.name}{entry.is_dir ? ' /' : ''}
+                    </div>
                     <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
                       <div style={{ width: `${Math.min(100, entry.usage_pct_of_parent)}%`, height: '100%', background: entry.is_dir ? 'linear-gradient(90deg, var(--accent-blue), var(--accent-purple))' : 'linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))' }} />
                     </div>
                     <div className="w-20 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{entry.usage_pct_of_parent.toFixed(1)}%</div>
                     <div className="w-28 text-right text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>{fmtBytes(entry.bytes)}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

@@ -6,6 +6,7 @@ import TopBar from './components/TopBar'
 import Dashboard from './components/Dashboard'
 import CpuPanel from './components/panels/CpuPanel'
 import MemoryPanel from './components/panels/MemoryPanel'
+import GpuPanel from './components/panels/GpuPanel'
 import DiskPanel from './components/panels/DiskPanel'
 import NetworkPanel from './components/panels/NetworkPanel'
 import ProcessesPanel from './components/panels/ProcessesPanel'
@@ -61,7 +62,7 @@ export default function App() {
 
         <div className="flex-1 flex overflow-hidden">
           {activeNav === 'overview' && <Dashboard onNavigate={setActiveNav} />}
-          {activeNav === 'gpu'      && <CpuPanel />}
+          {activeNav === 'gpu'      && <GpuPanel />}
           {activeNav === 'cpu'      && <CpuPanel />}
           {activeNav === 'memory'   && <MemoryPanel />}
           {activeNav === 'disk'     && <DiskPanel />}
