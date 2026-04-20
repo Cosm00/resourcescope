@@ -17,6 +17,10 @@ export default function NetworkPanel() {
 
   const busiestDownload = useMemo(() => [...nets].sort((a, b) => b.recv_bps - a.recv_bps)[0], [nets])
   const busiestUpload = useMemo(() => [...nets].sort((a, b) => b.sent_bps - a.sent_bps)[0], [nets])
+  const peakDownload = useMemo(() => Math.max(...recvHistory, 0), [recvHistory])
+  const peakUpload = useMemo(() => Math.max(...sentHistory, 0), [sentHistory])
+  const avgDownload = useMemo(() => recvHistory.length ? recvHistory.reduce((a, b) => a + b, 0) / recvHistory.length : 0, [recvHistory])
+  const avgUpload = useMemo(() => sentHistory.length ? sentHistory.reduce((a, b) => a + b, 0) / sentHistory.length : 0, [sentHistory])
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 animate-fade-slide">
@@ -63,6 +67,13 @@ export default function NetworkPanel() {
           secondary={busiestUpload ? `${fmtTotalBytes(busiestUpload.bytes_sent)} sent total` : 'Waiting for traffic'}
           accent="var(--accent-orange)"
         />
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        <InsightCard title="Peak Download" name="Recent history" primary={fmtBps(peakDownload * 1000)} secondary="Highest observed in current chart buffer" accent="var(--accent-cyan)" />
+        <InsightCard title="Peak Upload" name="Recent history" primary={fmtBps(peakUpload * 1000)} secondary="Highest observed in current chart buffer" accent="var(--accent-orange)" />
+        <InsightCard title="Average Download" name="Recent history" primary={fmtBps(avgDownload * 1000)} secondary="Average across the current chart buffer" accent="var(--accent-blue)" />
+        <InsightCard title="Average Upload" name="Recent history" primary={fmtBps(avgUpload * 1000)} secondary="Average across the current chart buffer" accent="var(--accent-purple)" />
       </div>
 
       <div className="rounded-2xl overflow-hidden flex flex-col" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>

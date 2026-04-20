@@ -81,12 +81,65 @@ function DiskIcon() {
   )
 }
 
+function Treemap({ entries, onPick }: { entries: DirectoryUsage[]; onPick: (entry: DirectoryUsage) => void }) {
+  const total = entries.reduce((acc, e) => acc + e.bytes, 0)
+  return (
+    <div className="flex gap-1 h-28 rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+      {entries.slice(0, 10).map(entry => {
+        const width = total > 0 ? Math.max(6, (entry.bytes / total) * 100) : 10
+        return (
+          <button
+            key={entry.path}
+            type="button"
+            onClick={() => entry.is_dir && onPick(entry)}
+            className="h-full px-2 py-2 text-left overflow-hidden"
+            style={{
+              width: `${width}%`,
+              background: entry.is_dir ? 'linear-gradient(180deg, rgba(79,156,249,0.35), rgba(167,139,250,0.28))' : 'linear-gradient(180deg, rgba(34,211,238,0.30), rgba(79,156,249,0.24))',
+              minWidth: 24,
+            }}>
+            <div className="text-[10px] font-semibold truncate" style={{ color: 'white' }}>{entry.name}</div>
+            <div className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.78)' }}>{fmtBytes(entry.bytes)}</div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function Breadcrumbs({ currentPath, rootPath, onGo }: { currentPath: string; rootPath: string; onGo: (path: string) => void }) {
+  const parts = currentPath.split('/').filter(Boolean)
+  const crumbs = [rootPath]
+  let acc = rootPath === '/' ? '' : rootPath
+  for (const part of parts) {
+    const normalizedRoot = rootPath === '/' ? '' : rootPath
+    if (currentPath.startsWith(normalizedRoot)) {
+      acc = `${acc}/${part}`.replace(/\/+/g, '/')
+      crumbs.push(acc)
+    }
+  }
+  const uniq = Array.from(new Set(crumbs))
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {uniq.map((crumb, i) => (
+        <React.Fragment key={crumb}>
+          <button type="button" onClick={() => onGo(crumb)} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            {crumb === rootPath ? rootPath : crumb.split('/').filter(Boolean).slice(-1)[0]}
+          </button>
+          {i < uniq.length - 1 && <span style={{ color: 'var(--text-muted)' }}>›</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  )
+}
+
 export default function DiskPanel() {
   const disks = useMetricsStore(s => s.snapshot?.disks ?? EMPTY_DISKS)
   const [selectedMount, setSelectedMount] = useState<string | null>(null)
   const [scanResult, setScanResult] = useState<DiskScanResult | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [currentScanPath, setCurrentScanPath] = useState<string | null>(null)
 
   const totalSpace = disks.reduce((acc, d) => acc + d.total_bytes, 0)
   const usedSpace = disks.reduce((acc, d) => acc + d.used_bytes, 0)
@@ -94,12 +147,13 @@ export default function DiskPanel() {
 
   const selectedDisk = useMemo(() => disks.find(d => d.mount_point === selectedMount) ?? disks[0] ?? null, [disks, selectedMount])
 
-  const runScan = async (mountPoint: string) => {
-    setSelectedMount(mountPoint)
+  const runScan = async (path: string, mountPoint?: string) => {
+    if (mountPoint) setSelectedMount(mountPoint)
+    setCurrentScanPath(path)
     setScanBusy(true)
     setScanError(null)
     try {
-      const res = await invoke<DiskScanResult>('scan_disk_directory', { path: mountPoint })
+      const res = await invoke<DiskScanResult>('scan_disk_directory', { path })
       setScanResult(res)
     } catch (err) {
       setScanError(String(err))
@@ -127,11 +181,11 @@ export default function DiskPanel() {
             <div>
               <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Storage Examiner</div>
               <div className="text-lg font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>{selectedDisk.mount_point}</div>
-              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>On-demand path scanner for top space consumers inside this volume.</div>
+              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>On-demand recursive path scanner for the selected volume.</div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(251,146,60,0.12)', color: 'var(--accent-orange)' }}>{selectedDisk.usage_pct.toFixed(1)}% full</span>
-              <button type="button" onClick={() => runScan(selectedDisk.mount_point)} className="px-3 py-2 rounded-xl text-xs font-semibold" style={{ background: 'rgba(79,156,249,0.10)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.18)' }}>
+              <button type="button" onClick={() => runScan(selectedDisk.mount_point, selectedDisk.mount_point)} className="px-3 py-2 rounded-xl text-xs font-semibold" style={{ background: 'rgba(79,156,249,0.10)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.18)' }}>
                 {scanBusy ? 'Scanning…' : 'Scan volume'}
               </button>
             </div>
@@ -151,8 +205,7 @@ export default function DiskPanel() {
                 const pctOfAll = totalSpace > 0 ? (disk.used_bytes / totalSpace) * 100 : 0
                 const active = disk.mount_point === selectedDisk.mount_point
                 return (
-                  <button key={`${disk.mount_point}-${i}`} type="button" onClick={() => setSelectedMount(disk.mount_point)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left"
-                    style={{ background: active ? 'rgba(79,156,249,0.08)' : 'rgba(255,255,255,0.03)', border: active ? '1px solid rgba(79,156,249,0.2)' : '1px solid rgba(255,255,255,0.05)' }}>
+                  <button key={`${disk.mount_point}-${i}`} type="button" onClick={() => setSelectedMount(disk.mount_point)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: active ? 'rgba(79,156,249,0.08)' : 'rgba(255,255,255,0.03)', border: active ? '1px solid rgba(79,156,249,0.2)' : '1px solid rgba(255,255,255,0.05)' }}>
                     <div className="min-w-[110px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{disk.mount_point}</div>
                     <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
                       <div style={{ width: `${Math.min(100, pctOfAll)}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-orange), var(--accent-red))' }} />
@@ -165,38 +218,29 @@ export default function DiskPanel() {
             </div>
           </div>
 
-          <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <div className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Top directories / files</div>
+          <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Top directories / files</div>
+            {currentScanPath && selectedDisk && <Breadcrumbs currentPath={currentScanPath} rootPath={selectedDisk.mount_point} onGo={(path) => runScan(path)} />}
             {scanError && <div className="text-xs mb-2" style={{ color: 'var(--accent-red)' }}>{scanError}</div>}
-            {!scanResult && !scanBusy && (
-              <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-                Click <strong>Scan volume</strong> to inspect the selected disk and see which top-level paths are taking up the most space.
-              </p>
-            )}
-            {scanBusy && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Scanning top-level paths…</p>}
+            {!scanResult && !scanBusy && <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>Click <strong>Scan volume</strong> to inspect the selected disk and see which paths are taking up the most space.</p>}
+            {scanBusy && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Scanning current path…</p>}
             {scanResult && (
-              <div className="flex flex-col gap-2">
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  Scanned {scanResult.scanned_entries} top entries under {scanResult.root_path}
+              <>
+                <Treemap entries={scanResult.children} onPick={(entry) => entry.is_dir && runScan(entry.path)} />
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Scanned {scanResult.scanned_entries} top entries under {scanResult.root_path}</div>
+                <div className="flex flex-col gap-2">
+                  {scanResult.children.map(entry => (
+                    <button key={entry.path} type="button" onClick={() => entry.is_dir && runScan(entry.path)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div className="min-w-[220px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{entry.name}{entry.is_dir ? ' /' : ''}</div>
+                      <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        <div style={{ width: `${Math.min(100, entry.usage_pct_of_parent)}%`, height: '100%', background: entry.is_dir ? 'linear-gradient(90deg, var(--accent-blue), var(--accent-purple))' : 'linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))' }} />
+                      </div>
+                      <div className="w-20 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{entry.usage_pct_of_parent.toFixed(1)}%</div>
+                      <div className="w-28 text-right text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>{fmtBytes(entry.bytes)}</div>
+                    </button>
+                  ))}
                 </div>
-                {scanResult.children.map(entry => (
-                  <button
-                    key={entry.path}
-                    type="button"
-                    onClick={() => entry.is_dir && runScan(entry.path)}
-                    className="flex items-center gap-3 px-3 py-2 rounded-xl text-left"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="min-w-[220px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {entry.name}{entry.is_dir ? ' /' : ''}
-                    </div>
-                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                      <div style={{ width: `${Math.min(100, entry.usage_pct_of_parent)}%`, height: '100%', background: entry.is_dir ? 'linear-gradient(90deg, var(--accent-blue), var(--accent-purple))' : 'linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))' }} />
-                    </div>
-                    <div className="w-20 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{entry.usage_pct_of_parent.toFixed(1)}%</div>
-                    <div className="w-28 text-right text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>{fmtBytes(entry.bytes)}</div>
-                  </button>
-                ))}
-              </div>
+              </>
             )}
           </div>
         </div>
@@ -205,7 +249,7 @@ export default function DiskPanel() {
       {disks.length > 0 ? (
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
           {disks.map((disk, i) => (
-            <DiskCard key={`${disk.mount_point}-${i}`} disk={disk} onInspect={() => setSelectedMount(disk.mount_point)} />
+            <DiskCard key={`${disk.mount_point}-${i}`} disk={disk} onInspect={() => { setSelectedMount(disk.mount_point); runScan(disk.mount_point, disk.mount_point) }} />
           ))}
         </div>
       ) : (

@@ -1,3 +1,18 @@
+## [1.1.0] - 2026-04-19
+
+### Added
+- Dedicated GPU panel with device-level deep-dive metrics and usage trends.
+- Recursive disk storage examiner with clickable path drilldown.
+- Breadcrumb navigation for disk path exploration.
+- Treemap-style storage visualization for scanned directories/files.
+- Menubar display customization with selectable metric modes and independent refresh interval.
+- Tab-specific top process ranking panels for CPU and Memory views.
+
+### Improved
+- Overview cards are now standardized in height and act as click-through navigation shortcuts.
+- Network deep-dive now includes busiest interfaces plus recent peak/average traffic summaries.
+- Disk tab now behaves like an actual storage investigation tool instead of a static usage page.
+
 ## [1.0.1] - 2026-04-19
 
 ### Added
