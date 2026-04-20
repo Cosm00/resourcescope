@@ -72,7 +72,7 @@ fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
 
 #[tauri::command]
 fn terminate_process(pid: u32, force: bool, state: tauri::State<CollectorState>) -> Result<(), String> {
-    use sysinfo::{Pid, ProcessesToUpdate, Signal};
+    use sysinfo::{Pid, ProcessesToUpdate};
 
     let mut collector = state.lock().map_err(|_| "collector lock poisoned".to_string())?;
     collector.system.refresh_processes(ProcessesToUpdate::All, true);
