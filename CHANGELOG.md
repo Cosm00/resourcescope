@@ -1,3 +1,9 @@
+## [1.1.1] - 2026-04-19
+
+### Fixed
+- Release workflow now includes macOS signing / notarization scaffolding using Developer ID Application and App Store Connect API key credentials.
+- Follow-up release to validate signed/notarized GitHub artifacts.
+
 ## [1.1.0] - 2026-04-19
 
 ### Added
