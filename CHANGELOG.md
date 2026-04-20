@@ -1,3 +1,8 @@
+## [1.1.2] - 2026-04-20
+
+### Fixed
+- Retry release with corrected Developer ID Application certificate for macOS signing/notarization.
+
 ## [1.1.1] - 2026-04-19
 
 ### Fixed
