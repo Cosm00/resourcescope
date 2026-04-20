@@ -4,7 +4,7 @@
 
 Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend. Ships as a native app (~10 MB) with no Electron, no browser chrome — just a fast, real-time dashboard.
 
-![screenshot placeholder](docs/screenshot.png)
+![ResourceScope screenshot](https://i.imgur.com/xyBOoqg.png)
 
 ---
 
