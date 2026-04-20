@@ -1,3 +1,8 @@
+## [1.1.3] - 2026-04-20
+
+### Fixed
+- Retry release after refreshing APPLE_CERTIFICATE_P12_BASE64 secret for macOS signing.
+
 ## [1.1.2] - 2026-04-20
 
 ### Fixed
