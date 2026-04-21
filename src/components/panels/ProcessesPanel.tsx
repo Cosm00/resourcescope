@@ -134,15 +134,23 @@ export default function ProcessesPanel() {
               const badge = badgeColor(proc.process_kind)
               const active = selected?.pid === proc.pid
               return (
-                <button
+                <div
                   key={proc.pid}
-                  className="grid px-5 py-3 items-center w-full text-left"
+                  role="button"
+                  tabIndex={0}
+                  className="grid px-5 py-3 items-center w-full text-left cursor-pointer select-none"
                   style={{
                     gridTemplateColumns: COLS.map(c => c.col).join(' '),
                     borderBottom: i === sorted.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.03)',
                     background: active ? 'rgba(79,156,249,0.08)' : 'transparent',
                   }}
-                  onClick={() => setSelectedPid(proc.pid)}>
+                  onClick={() => setSelectedPid(proc.pid)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSelectedPid(proc.pid)
+                    }
+                  }}>
                   <div className="min-w-0 pr-3">
                     <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                       {proc.friendly_name ?? proc.name}
@@ -160,7 +168,7 @@ export default function ProcessesPanel() {
                   <span className="text-xs tabular-nums font-mono" style={{ color: 'var(--text-muted)' }}>{proc.pid}</span>
                   {showMinibar ? <UsageBar value={proc.cpu_pct} max={maxCpu} color="var(--accent-blue)" /> : <span className="text-xs tabular-nums">{proc.cpu_pct.toFixed(1)}%</span>}
                   <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{fmtBytes(proc.mem_bytes)}</span>
-                </button>
+                </div>
               )
             })}
           </div>
