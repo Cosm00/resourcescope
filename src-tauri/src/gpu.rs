@@ -72,6 +72,14 @@ mod platform {
         notes: Option<String>,
     }
 
+    #[derive(Default)]
+    struct PowerMetricsGpuInfo {
+        active_residency_pct: Option<f32>,
+        frequency_mhz: Option<u64>,
+        power_mw: Option<u64>,
+        notes: Option<String>,
+    }
+
     const IOREG_PATH: &str = "/usr/sbin/ioreg";
     const IOREG_CLASS_CANDIDATES: &[&str] = &[
         "IOAccelerator",
@@ -162,6 +170,7 @@ mod platform {
 
         let perf = extract_braced_object(&output, "PerformanceStatistics")
             .or_else(|| io_compat.as_deref().and_then(|obj| extract_braced_object(obj, "PerformanceStatistics")));
+        let power_metrics = collect_powermetrics_gpu_info();
 
         if let Some(perf) = perf {
             info.utilization_pct = extract_object_f32(&perf, "Device Utilization %")
@@ -183,7 +192,13 @@ mod platform {
             .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
         info.power_state = extract_nested_u64_value(&output, "IOPowerManagement", "CurrentPowerState");
         info.last_submission_pid = extract_nested_u64_value(&output, "AGCInfo", "fLastSubmissionPID").map(|v| v as u32);
-        info.notes = Some(format!("Using discovered IORegistry class {class_name}. Temperature is not exposed by this backend."));
+        if let Some(active) = power_metrics.active_residency_pct {
+            info.utilization_pct = Some(active);
+        }
+        info.notes = Some(match power_metrics.notes {
+            Some(extra) => format!("Using discovered IORegistry class {class_name}. {extra}"),
+            None => format!("Using discovered IORegistry class {class_name}. Temperature is not exposed by this backend."),
+        });
         info.collection_method = format!("ioreg -r -n {class_name} -l");
 
         Some(info)
@@ -236,6 +251,40 @@ mod platform {
             info.notes = Some("Static GPU identity sourced from system_profiler.".to_string());
         }
 
+        info
+    }
+
+    fn collect_powermetrics_gpu_info() -> PowerMetricsGpuInfo {
+        let output = match Command::new("/usr/bin/env")
+            .args(["sh", "-lc", "powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(_) => return PowerMetricsGpuInfo::default(),
+        };
+
+        let text = match String::from_utf8(output.stdout) {
+            Ok(text) => text,
+            Err(_) => return PowerMetricsGpuInfo::default(),
+        };
+
+        if text.trim().is_empty() {
+            return PowerMetricsGpuInfo {
+                notes: Some("powermetrics needs elevated privileges; run the app or helper as admin for fuller macOS GPU telemetry.".to_string()),
+                ..Default::default()
+            };
+        }
+
+        let mut info = PowerMetricsGpuInfo::default();
+        info.active_residency_pct = extract_plist_real(&text, "gpu_active_residency_pct").map(|v| v as f32);
+        info.frequency_mhz = extract_plist_real(&text, "freq_hz").map(|v| (v / 1_000_000.0) as u64);
+        info.power_mw = extract_plist_real(&text, "power_mw").map(|v| v as u64);
+        info.notes = Some(match (info.active_residency_pct, info.frequency_mhz, info.power_mw) {
+            (Some(active), Some(freq), Some(power)) => format!("powermetrics reported GPU active residency {active:.1}%, frequency {freq} MHz, and power {power} mW."),
+            (Some(active), Some(freq), None) => format!("powermetrics reported GPU active residency {active:.1}% and frequency {freq} MHz."),
+            (Some(active), None, _) => format!("powermetrics reported GPU active residency {active:.1}%."),
+            _ => "powermetrics returned output, but no recognized GPU fields were parsed.".to_string(),
+        });
         info
     }
 
@@ -371,6 +420,23 @@ mod platform {
         } else {
             digits.parse().ok()
         }
+    }
+
+    fn extract_plist_real(s: &str, key: &str) -> Option<f64> {
+        let needle = format!("<key>{}</key>", key);
+        let start = s.find(&needle)? + needle.len();
+        let rest = &s[start..];
+        if let Some(idx) = rest.find("<real>") {
+            let inner = &rest[idx + 6..];
+            let end = inner.find("</real>")?;
+            return inner[..end].trim().parse().ok();
+        }
+        if let Some(idx) = rest.find("<integer>") {
+            let inner = &rest[idx + 9..];
+            let end = inner.find("</integer>")?;
+            return inner[..end].trim().parse().ok();
+        }
+        None
     }
 
     fn parse_leading_f32(s: &str) -> Option<f32> {
