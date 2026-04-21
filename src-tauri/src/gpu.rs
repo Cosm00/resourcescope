@@ -149,8 +149,7 @@ mod platform {
 
         if let Some(perf) = perf {
             info.utilization_pct = extract_object_f32(&perf, "Device Utilization %")
-                .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"))
-                .or_else(|| derive_utilization_from_vram_free(&perf, info.memory_total_bytes));
+                .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"));
             info.renderer_utilization_pct = extract_object_f32(&perf, "Renderer Utilization %");
             info.tiler_utilization_pct = extract_object_f32(&perf, "Tiler Utilization %");
             info.memory_used_bytes = extract_object_u64(&perf, "In use system memory");
@@ -331,15 +330,6 @@ mod platform {
         Some(total.saturating_sub(free))
     }
 
-    fn derive_utilization_from_vram_free(perf: &str, total: Option<u64>) -> Option<f32> {
-        let total = total? as f32;
-        if total <= 0.0 {
-            return None;
-        }
-        let free = extract_object_u64(perf, "vramFreeBytes")? as f32;
-        let used = (total - free).max(0.0);
-        Some((used / total * 100.0).clamp(0.0, 100.0))
-    }
 }
 
 #[cfg(target_os = "linux")]
