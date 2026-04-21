@@ -195,6 +195,10 @@ mod platform {
         info.last_submission_pid = extract_nested_u64_value(&output, "AGCInfo", "fLastSubmissionPID").map(|v| v as u32);
         if let Some(active) = power_metrics.active_residency_pct {
             info.utilization_pct = Some(active);
+            info.support_level = "full".to_string();
+        }
+        if let Some(freq) = power_metrics.frequency_mhz {
+            info.power_state = Some(freq);
         }
         if let Some(backend) = power_metrics.backend.clone() {
             info.backend = backend;
