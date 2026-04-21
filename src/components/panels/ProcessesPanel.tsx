@@ -98,7 +98,7 @@ export default function ProcessesPanel() {
         <div className="flex-1">
           <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Processes</h1>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {processes.length} running · {sorted.length} shown · click a row for “what is this?” details
+            {processes.length} running · {sorted.length} shown · select a row, then use the action buttons in the right panel
           </p>
         </div>
         <div className="relative">
@@ -175,22 +175,22 @@ export default function ProcessesPanel() {
                     <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
                     <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selected.app_name}</div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
                     <button
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => handleTerminate(false)}
-                      className="px-3 py-2 rounded-xl text-xs font-semibold"
+                      className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
                       style={{ background: 'rgba(251,146,60,0.10)', color: 'var(--accent-orange)', border: '1px solid rgba(251,146,60,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-                      {busyAction === 'quit' ? 'Quitting…' : 'Quit'}
+                      {busyAction === 'quit' ? 'Quitting…' : 'Quit App'}
                     </button>
                     <button
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => handleTerminate(true)}
-                      className="px-3 py-2 rounded-xl text-xs font-semibold"
+                      className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
                       style={{ background: 'rgba(248,113,113,0.10)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-                      {busyAction === 'force' ? 'Force quitting…' : 'Force quit'}
+                      {busyAction === 'force' ? 'Force quitting…' : 'Force Quit'}
                     </button>
                   </div>
                 </div>
@@ -216,9 +216,9 @@ export default function ProcessesPanel() {
               <DetailRow label="User" value={selected.user ?? 'Unknown'} />
               <DetailRow label="Command" value={selected.cmd.length ? selected.cmd.join(' ') : 'Unknown'} mono />
               <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>What can I do here?</div>
+                <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Actions</div>
                 <div className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>
-                  Use <strong>Quit</strong> for a polite termination attempt. Use <strong>Force quit</strong> when the app is hung, unresponsive, or ignoring normal shutdown.
+                  <strong>Quit App</strong> asks the selected process to exit normally. <strong>Force Quit</strong> kills it immediately when it is frozen, hung, or ignoring normal shutdown.
                 </div>
               </div>
             </div>
