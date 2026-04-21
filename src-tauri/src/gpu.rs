@@ -64,6 +64,14 @@ mod platform {
     use super::GpuInfo;
     use std::process::Command;
 
+    #[derive(Default)]
+    struct SystemProfilerGpuInfo {
+        name: Option<String>,
+        vendor: Option<String>,
+        core_count: Option<usize>,
+        notes: Option<String>,
+    }
+
     const IOREG_PATH: &str = "/usr/sbin/ioreg";
     const IOREG_CLASS_CANDIDATES: &[&str] = &[
         "IOAccelerator",
@@ -76,18 +84,23 @@ mod platform {
     ];
 
     pub fn collect_static_info() -> Option<GpuInfo> {
+        let profiler = collect_system_profiler_info();
         let (class_name, output) = find_gpu_ioreg_dump()?;
         let io_compat = extract_braced_object(&output, "IOCompatibilityProperties");
-        let vendor = infer_vendor(&output);
-        let name = extract_quoted_value(&output, "model")
+        let ioreg_vendor = infer_vendor(&output);
+        let vendor = profiler.vendor.clone().unwrap_or(ioreg_vendor);
+        let name = profiler.name.clone()
+            .or_else(|| extract_quoted_value(&output, "model"))
             .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "MetalPluginName")))
             .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "IOGLBundleName")))
             .or_else(|| extract_quoted_value(&output, "CFBundleName"))
             .or_else(|| infer_name_from_class(&class_name, &vendor))
             .unwrap_or_else(|| format!("{} GPU", vendor));
-        let core_count = extract_u64_value(&output, "gpu-core-count")
-            .or_else(|| extract_u64_value(&output, "num_cores"))
-            .map(|v| v as usize);
+        let core_count = profiler.core_count.or_else(|| {
+            extract_u64_value(&output, "gpu-core-count")
+                .or_else(|| extract_u64_value(&output, "num_cores"))
+                .map(|v| v as usize)
+        });
         let memory_total_bytes = extract_u64_value(&output, "recommendedMaxWorkingSetSize")
             .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
 
@@ -113,7 +126,10 @@ mod platform {
             } else {
                 "partial".to_string()
             },
-            notes: Some(format!("Discovered GPU IORegistry node via class {class_name}.")),
+            notes: Some(match profiler.notes {
+                Some(extra) => format!("{extra} IORegistry node discovered via class {class_name}."),
+                None => format!("Discovered GPU IORegistry node via class {class_name}."),
+            }),
             collection_method: format!("ioreg -r -n {class_name} -l"),
         })
     }
@@ -175,6 +191,52 @@ mod platform {
 
     pub fn unsupported_info() -> Option<GpuInfo> {
         None
+    }
+
+    fn collect_system_profiler_info() -> SystemProfilerGpuInfo {
+        let output = match Command::new("/usr/sbin/system_profiler")
+            .args(["SPDisplaysDataType"])
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            _ => return SystemProfilerGpuInfo::default(),
+        };
+
+        let text = match String::from_utf8(output.stdout) {
+            Ok(text) => text,
+            Err(_) => return SystemProfilerGpuInfo::default(),
+        };
+
+        let mut info = SystemProfilerGpuInfo::default();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if info.name.is_none() {
+                if let Some(value) = trimmed.strip_prefix("Chipset Model: ") {
+                    info.name = Some(value.trim().to_string());
+                    continue;
+                }
+            }
+            if info.vendor.is_none() {
+                if let Some(value) = trimmed.strip_prefix("Vendor: ") {
+                    info.vendor = Some(value.split('(').next().unwrap_or(value).trim().to_string());
+                    continue;
+                }
+            }
+            if info.core_count.is_none() {
+                if let Some(value) = trimmed.strip_prefix("Total Number of Cores: ") {
+                    if let Ok(parsed) = value.trim().parse::<usize>() {
+                        info.core_count = Some(parsed);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if info.name.is_some() || info.vendor.is_some() || info.core_count.is_some() {
+            info.notes = Some("Static GPU identity sourced from system_profiler.".to_string());
+        }
+
+        info
     }
 
     fn find_gpu_ioreg_dump() -> Option<(String, String)> {
