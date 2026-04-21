@@ -255,8 +255,11 @@ mod platform {
     }
 
     fn collect_powermetrics_gpu_info() -> PowerMetricsGpuInfo {
+        let helper_cmd = std::env::var("RESOURCESCOPE_GPU_HELPER")
+            .unwrap_or_else(|_| "/usr/local/bin/resourcescope-gpu-helper".to_string());
+        let shell_cmd = format!("if [ -x \"{helper_cmd}\" ]; then \"{helper_cmd}\"; else powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true; fi");
         let output = match Command::new("/usr/bin/env")
-            .args(["sh", "-lc", "powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true"])
+            .args(["sh", "-lc", &shell_cmd])
             .output()
         {
             Ok(output) => output,
@@ -270,7 +273,7 @@ mod platform {
 
         if text.trim().is_empty() {
             return PowerMetricsGpuInfo {
-                notes: Some("powermetrics needs elevated privileges; run the app or helper as admin for fuller macOS GPU telemetry.".to_string()),
+                notes: Some(format!("powermetrics needs elevated privileges; configure and run an elevated helper at {} (or set RESOURCESCOPE_GPU_HELPER) for fuller macOS GPU telemetry.", helper_cmd)),
                 ..Default::default()
             };
         }

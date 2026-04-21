@@ -102,7 +102,7 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 ResourceScope now uses a backend-based GPU collector instead of pretending every OS exposes the same telemetry.
 
 Current state:
-- **macOS:** best support right now; dynamically discovers IORegistry GPU nodes and reads Apple Silicon-style performance statistics when present
+- **macOS:** best support right now; uses `system_profiler` + dynamic IORegistry discovery and can optionally use an elevated `powermetrics` helper for fuller GPU telemetry
 - **Linux:** partial support via `/sys/class/drm` + `hwmon` when drivers expose data
 - **Windows:** DXGI adapter discovery is now wired for name/vendor/memory; next step is GPU Engine perf counters / vendor-enhanced collection for live utilization and thermals
 
@@ -116,6 +116,23 @@ What this means in practice:
 - the app now reports the active GPU backend and support level directly in the UI
 - some machines will show **full** metrics, some **partial**, and some **unsupported** depending on driver/OS exposure
 - this is intentional: honest telemetry beats fake precision
+
+### macOS elevated GPU helper
+
+For fuller macOS GPU telemetry, ResourceScope can use an elevated helper command instead of calling `powermetrics` directly from the main app process.
+
+Included helper scaffold:
+- `scripts/macos/resourcescope-gpu-helper.sh`
+
+Suggested install path:
+- `/usr/local/bin/resourcescope-gpu-helper`
+
+Backend behavior:
+- if `RESOURCESCOPE_GPU_HELPER` is set, ResourceScope tries that command first
+- otherwise it looks for `/usr/local/bin/resourcescope-gpu-helper`
+- if no helper exists, it falls back to direct `powermetrics` and then to non-elevated sources
+
+This keeps the main app usable without admin while allowing fuller telemetry when a deliberate elevated helper is installed.
 
 ## Support
 
