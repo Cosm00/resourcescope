@@ -129,7 +129,7 @@ export default function ProcessesPanel() {
             ))}
           </div>
 
-          <div className="overflow-y-auto flex-1">
+          <div className="overflow-y-auto flex-1 relative z-10" style={{ pointerEvents: 'auto' }}>
             {sorted.map((proc, i) => {
               const badge = badgeColor(proc.process_kind)
               const active = selected?.pid === proc.pid
@@ -138,11 +138,15 @@ export default function ProcessesPanel() {
                   key={proc.pid}
                   role="button"
                   tabIndex={0}
-                  className="grid px-5 py-3 items-center w-full text-left cursor-pointer select-none"
+                  className="grid px-5 py-3 items-center w-full text-left cursor-pointer select-none relative z-10"
                   style={{
                     gridTemplateColumns: COLS.map(c => c.col).join(' '),
                     borderBottom: i === sorted.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.03)',
                     background: active ? 'rgba(79,156,249,0.08)' : 'transparent',
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    setSelectedPid(proc.pid)
                   }}
                   onClick={() => setSelectedPid(proc.pid)}
                   onKeyDown={(e) => {
