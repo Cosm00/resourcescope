@@ -196,6 +196,8 @@ mod platform {
         if let Some(active) = power_metrics.active_residency_pct {
             info.utilization_pct = Some(active);
             info.support_level = "full".to_string();
+        } else if power_metrics.frequency_mhz.is_some() || power_metrics.power_mw.is_some() {
+            info.support_level = "partial".to_string();
         }
         if let Some(freq) = power_metrics.frequency_mhz {
             info.power_state = Some(freq);
