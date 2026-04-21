@@ -39,12 +39,16 @@ export default function GpuPanel() {
             <DetailTile label="Platform" value={gpu.platform} />
             <DetailTile label="Vendor" value={gpu.vendor || 'Unknown'} />
             <DetailTile label="Core Count" value={gpu.core_count ? String(gpu.core_count) : 'Unknown'} />
+            <DetailTile label="Backend" value={gpu.backend || 'Unknown'} />
+            <DetailTile label="Support Level" value={gpu.support_level || 'Unknown'} />
             <DetailTile label="Collection Method" value={gpu.collection_method} />
-            <DetailTile label="Memory Usage" value={`${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB`} />
+            <DetailTile label="Adapter Index" value={gpu.adapter_index !== null ? String(gpu.adapter_index) : 'Unknown'} />
+            <DetailTile label="Memory Usage" value={formatMemoryUsage(gpu)} />
             <DetailTile label="Renderer Load" value={gpu.renderer_utilization_pct !== null ? `${gpu.renderer_utilization_pct.toFixed(1)}%` : 'Unknown'} />
             <DetailTile label="Tiler Load" value={gpu.tiler_utilization_pct !== null ? `${gpu.tiler_utilization_pct.toFixed(1)}%` : 'Unknown'} />
             <DetailTile label="Last Submission PID" value={gpu.last_submission_pid !== null ? String(gpu.last_submission_pid) : 'Unknown'} />
             <DetailTile label="Power State" value={gpu.power_state !== null ? String(gpu.power_state) : 'Unknown'} />
+            <DetailTile label="Collector Notes" value={gpu.notes ?? 'No collector notes.'} />
           </div>
         ) : (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No GPU metrics are available right now on this machine.</p>
@@ -54,7 +58,7 @@ export default function GpuPanel() {
       <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>What this tab is for</div>
         <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-          GPU usage is harder to attribute to per-process ownership reliably across platforms, so this tab focuses on device-level performance, temperature, memory pressure, and graphics load trends instead of pretending to give fake per-process GPU ownership.
+          GPU support is now backend-driven and intentionally honest. Some platforms expose rich device telemetry, others only partial adapter data. This tab focuses on reliable device-level stats and shows the active backend/support level instead of faking per-process GPU ownership.
         </p>
       </div>
     </div>
@@ -68,6 +72,20 @@ function InfoTile({ label, value, accent }: { label: string; value: string; acce
       <span className="text-lg font-bold tabular-nums truncate" style={{ color: accent }}>{value}</span>
     </div>
   )
+}
+
+function formatMemoryUsage(gpu: any) {
+  if (!gpu) return '—'
+  const used = gpu.memory_used_bytes ?? gpu.memory_allocated_bytes
+  const total = gpu.memory_total_bytes ?? gpu.memory_allocated_bytes
+  if (used == null && total == null) return 'Unknown'
+  const toGb = (bytes: number | null) => (bytes == null ? null : bytes / (1024 ** 3))
+  const usedGb = toGb(used)
+  const totalGb = toGb(total)
+  if (usedGb != null && totalGb != null) return `${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`
+  if (usedGb != null) return `${usedGb.toFixed(1)} GB used`
+  if (totalGb != null) return `${totalGb.toFixed(1)} GB total`
+  return 'Unknown'
 }
 
 function DetailTile({ label, value }: { label: string; value: string }) {

@@ -86,9 +86,9 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 ## Roadmap
 
 - [ ] Individual drill-down panels (CPU / Memory / Disk / Network / Processes)
-- [ ] GPU metrics — NVML for NVIDIA, IOKit/Metal for Apple Silicon
+- [ ] GPU metrics phase 2 — vendor-enhanced backends (NVML for NVIDIA, DXGI/ADL on Windows, richer Intel/AMD Linux collectors)
 - [ ] macOS: `powermetrics` integration for accurate per-core temps
-- [ ] Windows: WMI temperature sensors
+- [ ] Windows: DXGI / perf-counter collector to replace current placeholder backend
 - [ ] Alert thresholds with native system notifications
 - [ ] Settings panel (refresh interval, history length, thresholds)
 - [ ] System tray with mini stats
@@ -96,6 +96,20 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 
 ---
 
+
+## GPU telemetry status
+
+ResourceScope now uses a backend-based GPU collector instead of pretending every OS exposes the same telemetry.
+
+Current state:
+- **macOS:** best support right now; dynamically discovers IORegistry GPU nodes and reads Apple Silicon-style performance statistics when present
+- **Linux:** partial support via `/sys/class/drm` + `hwmon` when drivers expose data
+- **Windows:** scaffolded placeholder backend today; intended next step is DXGI / vendor-enhanced collection
+
+What this means in practice:
+- the app now reports the active GPU backend and support level directly in the UI
+- some machines will show **full** metrics, some **partial**, and some **unsupported** depending on driver/OS exposure
+- this is intentional: honest telemetry beats fake precision
 
 ## Support
 

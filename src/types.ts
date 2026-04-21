@@ -29,9 +29,14 @@ export interface GpuInfo {
   memory_used_bytes: number | null
   memory_allocated_bytes: number | null
   memory_driver_bytes: number | null
+  memory_total_bytes: number | null
   temperature_c: number | null
   power_state: number | null
   last_submission_pid: number | null
+  adapter_index: number | null
+  backend: string
+  support_level: string
+  notes: string | null
   collection_method: string
 }
 
