@@ -104,7 +104,13 @@ ResourceScope now uses a backend-based GPU collector instead of pretending every
 Current state:
 - **macOS:** best support right now; dynamically discovers IORegistry GPU nodes and reads Apple Silicon-style performance statistics when present
 - **Linux:** partial support via `/sys/class/drm` + `hwmon` when drivers expose data
-- **Windows:** scaffolded placeholder backend today; intended next step is DXGI / vendor-enhanced collection
+- **Windows:** scaffolded placeholder backend today; intended next step is DXGI adapter enumeration plus GPU Engine perf counters / vendor-enhanced collection
+
+Recommended next backend layers:
+- **Windows generic:** DXGI adapter name + memory, PerfLib/PDH `GPU Engine(*)\\Utilization Percentage`
+- **Windows vendor-enhanced:** NVML (NVIDIA), ADL (AMD), Intel-specific telemetry when practical
+- **Linux vendor-enhanced:** NVML for NVIDIA, deeper AMD/Intel driver-specific collectors
+- **macOS phase 2:** broaden Intel Mac fallback and multi-GPU discovery
 
 What this means in practice:
 - the app now reports the active GPU backend and support level directly in the UI
