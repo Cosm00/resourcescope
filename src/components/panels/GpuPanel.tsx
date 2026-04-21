@@ -31,7 +31,7 @@ export default function GpuPanel() {
         </div>
 
         <InfoTile label="Temperature" value={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : '—'} accent="var(--accent-orange)" />
-        <InfoTile label="Unified Memory" value={gpu ? `${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB` : '—'} accent="var(--accent-purple)" />
+        <InfoTile label="Unified Memory" value={gpu ? summarizeMemory(gpu) : '—'} accent="var(--accent-purple)" />
       </div>
 
       <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
@@ -82,7 +82,22 @@ function usageSubtitle(gpu: any) {
   if (gpu.utilization_pct !== null) {
     return `${gpu.backend} is reporting live GPU utilization.`
   }
+  if (gpu.support_level === 'full') {
+    return `${gpu.backend} is active, but live utilization was not parsed from the current helper output.`
+  }
   return `${gpu.backend} is active, but this machine is only exposing ${gpu.support_level} telemetry right now.`
+}
+
+function summarizeMemory(gpu: any) {
+  const used = gpu.memory_used_bytes ?? gpu.memory_allocated_bytes
+  const total = gpu.memory_total_bytes ?? gpu.memory_allocated_bytes
+  const toGb = (bytes: number | null) => (bytes == null ? null : bytes / (1024 ** 3))
+  const usedGb = toGb(used)
+  const totalGb = toGb(total)
+  if (usedGb != null && totalGb != null) return `${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`
+  if (totalGb != null) return `${totalGb.toFixed(1)} GB total`
+  if (usedGb != null) return `${usedGb.toFixed(1)} GB used`
+  return '—'
 }
 
 function formatMemoryUsage(gpu: any) {
