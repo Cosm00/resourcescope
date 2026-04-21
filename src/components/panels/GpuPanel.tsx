@@ -13,7 +13,7 @@ export default function GpuPanel() {
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 animate-fade-slide">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', gridColumn: 'span 2' }}>
           <div className="flex items-center justify-between">
             <div>
@@ -31,6 +31,7 @@ export default function GpuPanel() {
         </div>
 
         <InfoTile label="Temperature" value={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : '—'} accent="var(--accent-orange)" />
+        <InfoTile label="GPU Frequency" value={gpu && gpu.backend.includes('powermetrics') && gpu.power_state !== null ? `${gpu.power_state} MHz` : '—'} accent="var(--accent-blue, #60a5fa)" />
         <InfoTile label="Unified Memory" value={gpu ? summarizeMemory(gpu) : '—'} accent="var(--accent-purple)" />
       </div>
 
@@ -50,7 +51,7 @@ export default function GpuPanel() {
             <DetailTile label="Renderer Load" value={gpu.renderer_utilization_pct !== null ? `${gpu.renderer_utilization_pct.toFixed(1)}%` : 'Unknown'} />
             <DetailTile label="Tiler Load" value={gpu.tiler_utilization_pct !== null ? `${gpu.tiler_utilization_pct.toFixed(1)}%` : 'Unknown'} />
             <DetailTile label="Last Submission PID" value={gpu.last_submission_pid !== null ? String(gpu.last_submission_pid) : 'Unknown'} />
-            <DetailTile label="Power State" value={gpu.power_state !== null ? String(gpu.power_state) : 'Unknown'} />
+            <DetailTile label="GPU Frequency" value={gpu.backend.includes('powermetrics') && gpu.power_state !== null ? `${gpu.power_state} MHz` : 'Unknown'} />
             <DetailTile label="Collector Notes" value={gpu.notes ?? 'No collector notes.'} />
           </div>
         ) : (
