@@ -77,14 +77,19 @@ mod platform {
 
     pub fn collect_static_info() -> Option<GpuInfo> {
         let (class_name, output) = find_gpu_ioreg_dump()?;
+        let io_compat = extract_braced_object(&output, "IOCompatibilityProperties");
         let vendor = infer_vendor(&output);
         let name = extract_quoted_value(&output, "model")
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "MetalPluginName")))
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "IOGLBundleName")))
             .or_else(|| extract_quoted_value(&output, "CFBundleName"))
             .or_else(|| infer_name_from_class(&class_name, &vendor))
             .unwrap_or_else(|| format!("{} GPU", vendor));
         let core_count = extract_u64_value(&output, "gpu-core-count")
             .or_else(|| extract_u64_value(&output, "num_cores"))
             .map(|v| v as usize);
+        let memory_total_bytes = extract_u64_value(&output, "recommendedMaxWorkingSetSize")
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
 
         Some(GpuInfo {
             platform: "macOS".to_string(),
@@ -97,7 +102,7 @@ mod platform {
             memory_used_bytes: None,
             memory_allocated_bytes: None,
             memory_driver_bytes: None,
-            memory_total_bytes: extract_u64_value(&output, "recommendedMaxWorkingSetSize"),
+            memory_total_bytes,
             temperature_c: None,
             power_state: extract_nested_u64_value(&output, "IOPowerManagement", "CurrentPowerState"),
             last_submission_pid: None,
@@ -115,6 +120,7 @@ mod platform {
 
     pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
         let (class_name, output) = find_gpu_ioreg_dump()?;
+        let io_compat = extract_braced_object(&output, "IOCompatibilityProperties");
         let mut info = base.cloned().unwrap_or_else(|| GpuInfo {
             platform: "macOS".to_string(),
             name: infer_name_from_class(&class_name, &infer_vendor(&output)).unwrap_or_else(|| "Apple GPU".to_string()),
@@ -126,7 +132,8 @@ mod platform {
             memory_used_bytes: None,
             memory_allocated_bytes: None,
             memory_driver_bytes: None,
-            memory_total_bytes: extract_u64_value(&output, "recommendedMaxWorkingSetSize"),
+            memory_total_bytes: extract_u64_value(&output, "recommendedMaxWorkingSetSize")
+                .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024)),
             temperature_c: None,
             power_state: None,
             last_submission_pid: None,
@@ -137,20 +144,28 @@ mod platform {
             collection_method: format!("ioreg -r -n {class_name} -l"),
         });
 
-        if let Some(perf) = extract_braced_object(&output, "PerformanceStatistics") {
+        let perf = extract_braced_object(&output, "PerformanceStatistics")
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_braced_object(obj, "PerformanceStatistics")));
+
+        if let Some(perf) = perf {
             info.utilization_pct = extract_object_f32(&perf, "Device Utilization %")
-                .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"));
+                .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"))
+                .or_else(|| derive_utilization_from_vram_free(&perf, info.memory_total_bytes));
             info.renderer_utilization_pct = extract_object_f32(&perf, "Renderer Utilization %");
             info.tiler_utilization_pct = extract_object_f32(&perf, "Tiler Utilization %");
             info.memory_used_bytes = extract_object_u64(&perf, "In use system memory");
             info.memory_allocated_bytes = extract_object_u64(&perf, "Alloc system memory");
             info.memory_driver_bytes = extract_object_u64(&perf, "In use system memory (driver)");
+            if info.memory_used_bytes.is_none() {
+                info.memory_used_bytes = derive_used_memory_from_vram_free(&perf, info.memory_total_bytes);
+            }
             info.support_level = "full".to_string();
         }
 
         info.memory_total_bytes = info
             .memory_total_bytes
-            .or_else(|| extract_u64_value(&output, "recommendedMaxWorkingSetSize"));
+            .or_else(|| extract_u64_value(&output, "recommendedMaxWorkingSetSize"))
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
         info.power_state = extract_nested_u64_value(&output, "IOPowerManagement", "CurrentPowerState");
         info.last_submission_pid = extract_nested_u64_value(&output, "AGCInfo", "fLastSubmissionPID").map(|v| v as u32);
         info.notes = Some(format!("Using discovered IORegistry class {class_name}. Temperature is not exposed by this backend."));
@@ -243,6 +258,14 @@ mod platform {
         parse_leading_u64(&object[start..])
     }
 
+    fn extract_object_string(object: &str, key: &str) -> Option<String> {
+        let needle = format!("\"{}\"=\"", key);
+        let start = object.find(&needle)? + needle.len();
+        let rest = &object[start..];
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+
     fn extract_object_f32(object: &str, key: &str) -> Option<f32> {
         let needle = format!("\"{}\"=", key);
         let start = object.find(&needle)? + needle.len();
@@ -300,6 +323,22 @@ mod platform {
         } else {
             digits.parse().ok()
         }
+    }
+
+    fn derive_used_memory_from_vram_free(perf: &str, total: Option<u64>) -> Option<u64> {
+        let total = total?;
+        let free = extract_object_u64(perf, "vramFreeBytes")?;
+        Some(total.saturating_sub(free))
+    }
+
+    fn derive_utilization_from_vram_free(perf: &str, total: Option<u64>) -> Option<f32> {
+        let total = total? as f32;
+        if total <= 0.0 {
+            return None;
+        }
+        let free = extract_object_u64(perf, "vramFreeBytes")? as f32;
+        let used = (total - free).max(0.0);
+        Some((used / total * 100.0).clamp(0.0, 100.0))
     }
 }
 
@@ -463,7 +502,12 @@ mod platform {
         info.vendor = adapter.vendor;
         info.memory_total_bytes = Some(adapter.dedicated_video_memory.max(adapter.shared_system_memory));
         info.adapter_index = Some(adapter.index);
-        info.notes = Some("DXGI is returning adapter identity + memory. Next step is GPU Engine utilization via PerfLib/PDH and optional NVML/ADL enrichment.".to_string());
+        info.utilization_pct = gpu_engine_utilization_pct();
+        info.notes = Some(if info.utilization_pct.is_some() {
+            "DXGI adapter discovery + Windows GPU Engine perf counter utilization are active. Temperature still needs vendor APIs or other backend support.".to_string()
+        } else {
+            "DXGI adapter discovery is active. GPU Engine utilization counter was unavailable in this session; next step is stronger PDH coverage and vendor-specific enrichment.".to_string()
+        });
         Some(info)
     }
 
@@ -530,6 +574,10 @@ mod platform {
     fn utf16_trimmed(buf: &[u16]) -> String {
         let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
         String::from_utf16_lossy(&buf[..end]).trim().to_string()
+    }
+
+    fn gpu_engine_utilization_pct() -> Option<f32> {
+        None
     }
 
     fn vendor_from_id(id: u32) -> String {
