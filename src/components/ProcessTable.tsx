@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useCallback } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../store/metricsStore'
 import type { ProcessInfo } from '../types'
 
-// Stable empty array — prevents infinite re-render from `?? []` in selector
 const EMPTY_PROCESSES: ProcessInfo[] = []
 
 type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid'
@@ -10,7 +10,8 @@ type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid'
 const UsageBar = React.memo(function UsageBar({
   value, max, color
 }: { value: number; max: number; color: string }) {
-  const pct = Math.min(100, (value / max) * 100)
+  const safeMax = Math.max(max, 1)
+  const pct = Math.min(100, (value / safeMax) * 100)
   const barColor = pct > 70 ? 'var(--accent-red)' : pct > 40 ? 'var(--accent-orange)' : color
   return (
     <div className="flex items-center gap-2">
@@ -28,19 +29,48 @@ const UsageBar = React.memo(function UsageBar({
   )
 })
 
-const ProcessRow = React.memo(function ProcessRow({ proc, isLast }: { proc: ProcessInfo; isLast: boolean }) {
+const ProcessRow = React.memo(function ProcessRow({
+  proc,
+  isLast,
+  isSelected,
+  onSelect,
+}: {
+  proc: ProcessInfo
+  isLast: boolean
+  isSelected: boolean
+  onSelect: (pid: number) => void
+}) {
   return (
-    <div className="grid px-5 py-2.5 items-center"
+    <div
+      role="button"
+      tabIndex={0}
+      className="grid px-5 py-2.5 items-center cursor-pointer select-none"
       style={{
         gridTemplateColumns: '30% 10% 30% 30%',
         borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.03)',
+        background: isSelected ? 'rgba(79,156,249,0.08)' : 'transparent',
       }}
-      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.025)'}
-      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+      onMouseDown={(e) => {
+        e.preventDefault()
+        onSelect(proc.pid)
+      }}
+      onClick={() => onSelect(proc.pid)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(proc.pid)
+        }
+      }}
+      onMouseEnter={e => {
+        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.025)'
+      }}
+      onMouseLeave={e => {
+        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent'
+      }}>
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="min-w-0">
-          <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{proc.name}</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>PID {proc.pid}</div>
+          <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{proc.friendly_name ?? proc.name}</div>
+          <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{proc.app_name}</div>
         </div>
       </div>
       <span className="text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>{proc.pid}</span>
@@ -58,6 +88,9 @@ export default function ProcessTable() {
   const processes = useMetricsStore(s => s.snapshot?.processes ?? EMPTY_PROCESSES)
   const [sortKey, setSortKey] = useState<SortKey>('cpu_pct')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [selectedPid, setSelectedPid] = useState<number | null>(null)
+  const [busyAction, setBusyAction] = useState<'quit' | 'force' | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const sorted = useMemo(() => {
     return [...processes].sort((a, b) => {
@@ -68,6 +101,11 @@ export default function ProcessTable() {
     })
   }, [processes, sortKey, sortDir])
 
+  const selected = useMemo(
+    () => sorted.find(p => p.pid === selectedPid) ?? sorted[0] ?? null,
+    [sorted, selectedPid]
+  )
+
   const handleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -76,6 +114,19 @@ export default function ProcessTable() {
       setSortDir('desc')
     }
   }, [sortKey])
+
+  const handleTerminate = async (force: boolean) => {
+    if (!selected) return
+    setActionError(null)
+    setBusyAction(force ? 'force' : 'quit')
+    try {
+      await invoke('terminate_process', { pid: selected.pid, force })
+    } catch (err) {
+      setActionError(String(err))
+    } finally {
+      setBusyAction(null)
+    }
+  }
 
   const COLS: { key: SortKey; label: string }[] = [
     { key: 'name', label: 'Process' },
@@ -91,8 +142,30 @@ export default function ProcessTable() {
         style={{ borderBottom: '1px solid var(--border)' }}>
         <div>
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Top Processes</h3>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{processes.length} shown · sorted by {sortKey}</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {processes.length} shown · select a row below to use Quit App or Force Quit here on the overview page
+          </p>
         </div>
+        {selected ? (
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => handleTerminate(false)}
+              className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
+              style={{ background: 'rgba(251,146,60,0.10)', color: 'var(--accent-orange)', border: '1px solid rgba(251,146,60,0.18)', opacity: busyAction ? 0.7 : 1 }}>
+              {busyAction === 'quit' ? 'Quitting…' : 'Quit App'}
+            </button>
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => handleTerminate(true)}
+              className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
+              style={{ background: 'rgba(248,113,113,0.10)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.18)', opacity: busyAction ? 0.7 : 1 }}>
+              {busyAction === 'force' ? 'Force quitting…' : 'Force Quit'}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid text-[10px] uppercase tracking-widest px-5 py-2"
@@ -116,7 +189,13 @@ export default function ProcessTable() {
 
       <div className="overflow-y-auto" style={{ maxHeight: 260 }}>
         {sorted.map((proc, i) => (
-          <ProcessRow key={proc.pid} proc={proc} isLast={i === sorted.length - 1} />
+          <ProcessRow
+            key={proc.pid}
+            proc={proc}
+            isLast={i === sorted.length - 1}
+            isSelected={selected?.pid === proc.pid}
+            onSelect={setSelectedPid}
+          />
         ))}
         {!processes.length && (
           <div className="flex items-center justify-center py-8">
@@ -124,6 +203,18 @@ export default function ProcessTable() {
           </div>
         )}
       </div>
+
+      {selected ? (
+        <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+          <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
+          <div className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+            {selected.app_name} · PID {selected.pid} · {selected.cpu_pct.toFixed(1)}% CPU · {fmtBytes(selected.mem_bytes)}
+          </div>
+          {actionError ? (
+            <div className="text-[11px] mt-2" style={{ color: 'var(--accent-red)' }}>{actionError}</div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
