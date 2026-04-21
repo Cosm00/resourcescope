@@ -429,8 +429,45 @@ mod platform {
 #[cfg(target_os = "windows")]
 mod platform {
     use super::GpuInfo;
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1};
 
     pub fn collect_static_info() -> Option<GpuInfo> {
+        let adapter = primary_adapter_info()?;
+        Some(GpuInfo {
+            platform: "Windows".to_string(),
+            name: adapter.name,
+            vendor: adapter.vendor,
+            core_count: None,
+            utilization_pct: None,
+            renderer_utilization_pct: None,
+            tiler_utilization_pct: None,
+            memory_used_bytes: None,
+            memory_allocated_bytes: None,
+            memory_driver_bytes: None,
+            memory_total_bytes: Some(adapter.dedicated_video_memory.max(adapter.shared_system_memory)),
+            temperature_c: None,
+            power_state: None,
+            last_submission_pid: None,
+            adapter_index: Some(adapter.index),
+            backend: "windows-dxgi".to_string(),
+            support_level: "partial".to_string(),
+            notes: Some("DXGI adapter discovery is live. Utilization/temperature still need PerfLib/PDH or vendor APIs.".to_string()),
+            collection_method: "DXGI adapter enumeration".to_string(),
+        })
+    }
+
+    pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
+        let adapter = primary_adapter_info()?;
+        let mut info = base.cloned().or_else(collect_static_info)?;
+        info.name = adapter.name;
+        info.vendor = adapter.vendor;
+        info.memory_total_bytes = Some(adapter.dedicated_video_memory.max(adapter.shared_system_memory));
+        info.adapter_index = Some(adapter.index);
+        info.notes = Some("DXGI is returning adapter identity + memory. Next step is GPU Engine utilization via PerfLib/PDH and optional NVML/ADL enrichment.".to_string());
+        Some(info)
+    }
+
+    pub fn unsupported_info() -> Option<GpuInfo> {
         Some(GpuInfo {
             platform: "Windows".to_string(),
             name: "Windows GPU adapter".to_string(),
@@ -446,20 +483,63 @@ mod platform {
             temperature_c: None,
             power_state: None,
             last_submission_pid: None,
-            adapter_index: Some(0),
-            backend: "windows-placeholder".to_string(),
-            support_level: "partial".to_string(),
-            notes: Some("Windows GPU support is scaffolded but not yet querying DXGI / NVML / ADL. This placeholder keeps the UI honest while the backend matures.".to_string()),
-            collection_method: "placeholder backend".to_string(),
+            adapter_index: None,
+            backend: "windows-unavailable".to_string(),
+            support_level: "unsupported".to_string(),
+            notes: Some("DXGI adapter discovery failed. This can happen in headless sessions, unsupported VMs, or restricted environments.".to_string()),
+            collection_method: "DXGI adapter enumeration".to_string(),
         })
     }
 
-    pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
-        base.cloned().or_else(collect_static_info)
+    #[derive(Clone)]
+    struct AdapterInfo {
+        index: u32,
+        name: String,
+        vendor: String,
+        dedicated_video_memory: u64,
+        shared_system_memory: u64,
     }
 
-    pub fn unsupported_info() -> Option<GpuInfo> {
-        collect_static_info()
+    fn primary_adapter_info() -> Option<AdapterInfo> {
+        unsafe {
+            let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+            let mut index = 0;
+            loop {
+                let adapter: IDXGIAdapter1 = match factory.EnumAdapters1(index) {
+                    Ok(adapter) => adapter,
+                    Err(_) => break,
+                };
+                let desc = adapter.GetDesc1().ok()?;
+                let name = utf16_trimmed(&desc.Description);
+                if name.to_ascii_lowercase().contains("microsoft basic render") {
+                    index += 1;
+                    continue;
+                }
+                return Some(AdapterInfo {
+                    index,
+                    name: if name.is_empty() { "Windows GPU adapter".to_string() } else { name },
+                    vendor: vendor_from_id(desc.VendorId),
+                    dedicated_video_memory: desc.DedicatedVideoMemory as u64,
+                    shared_system_memory: desc.SharedSystemMemory as u64,
+                });
+            }
+            None
+        }
+    }
+
+    fn utf16_trimmed(buf: &[u16]) -> String {
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..end]).trim().to_string()
+    }
+
+    fn vendor_from_id(id: u32) -> String {
+        match id {
+            0x10DE => "NVIDIA".to_string(),
+            0x1002 | 0x1022 => "AMD".to_string(),
+            0x8086 => "Intel".to_string(),
+            0x1414 => "Microsoft".to_string(),
+            _ => format!("PCI vendor {id:#06x}"),
+        }
     }
 }
 

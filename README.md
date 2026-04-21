@@ -104,7 +104,7 @@ ResourceScope now uses a backend-based GPU collector instead of pretending every
 Current state:
 - **macOS:** best support right now; dynamically discovers IORegistry GPU nodes and reads Apple Silicon-style performance statistics when present
 - **Linux:** partial support via `/sys/class/drm` + `hwmon` when drivers expose data
-- **Windows:** scaffolded placeholder backend today; intended next step is DXGI adapter enumeration plus GPU Engine perf counters / vendor-enhanced collection
+- **Windows:** DXGI adapter discovery is now wired for name/vendor/memory; next step is GPU Engine perf counters / vendor-enhanced collection for live utilization and thermals
 
 Recommended next backend layers:
 - **Windows generic:** DXGI adapter name + memory, PerfLib/PDH `GPU Engine(*)\\Utilization Percentage`
