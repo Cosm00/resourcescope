@@ -21,7 +21,7 @@ export default function GpuPanel() {
               <div className="text-4xl font-bold tabular-nums mt-1" style={{ color: 'var(--text-primary)' }}>
                 {gpu && gpu.utilization_pct !== null ? gpuPct.toFixed(1) : '—'}<span className="text-xl" style={{ color: 'var(--text-muted)' }}>{gpu && gpu.utilization_pct !== null ? '%' : ''}</span>
               </div>
-              <div className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs mt-2 leading-5" style={{ color: 'var(--text-muted)' }}>
                 {gpu ? usageSubtitle(gpu) : 'No GPU telemetry backend is active right now.'}
               </div>
             </div>
@@ -36,7 +36,14 @@ export default function GpuPanel() {
       </div>
 
       <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>GPU Details</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>GPU Details</div>
+          {gpu ? (
+            <span className="text-[10px] px-2.5 py-1 rounded-full border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border)', background: 'rgba(255,255,255,0.03)' }}>
+              {gpu.backend} · {gpu.support_level}
+            </span>
+          ) : null}
+        </div>
         {gpu ? (
           <div className="grid grid-cols-2 gap-4">
             <DetailTile label="GPU Name" value={gpu.name} />
@@ -81,10 +88,13 @@ function InfoTile({ label, value, accent }: { label: string; value: string; acce
 function usageSubtitle(gpu: any) {
   if (!gpu) return 'No GPU telemetry backend is active right now.'
   if (gpu.utilization_pct !== null) {
-    return `${gpu.backend} is reporting live GPU utilization.`
+    return `${gpu.backend} is reporting live GPU utilization right now.`
+  }
+  if (gpu.backend.includes('powermetrics')) {
+    return 'Privileged helper telemetry is active. This sample exposed GPU frequency, but not a live utilization percentage.'
   }
   if (gpu.support_level === 'full') {
-    return `${gpu.backend} is active, but live utilization was not parsed from the current helper output.`
+    return `${gpu.backend} is active, but live utilization was not parsed from the current sample.`
   }
   return `${gpu.backend} is active, but this machine is only exposing ${gpu.support_level} telemetry right now.`
 }
@@ -119,7 +129,7 @@ function DetailTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl p-4 flex flex-col gap-1.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
       <span className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>{label}</span>
-      <span className="text-sm font-medium break-words" style={{ color: 'var(--text-primary)' }}>{value}</span>
+      <span className="text-sm font-medium break-words leading-6" style={{ color: 'var(--text-primary)' }}>{value}</span>
     </div>
   )
 }
