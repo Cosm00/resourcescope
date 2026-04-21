@@ -121,15 +121,18 @@ What this means in practice:
 
 For fuller macOS GPU telemetry, ResourceScope can use an elevated helper command instead of calling `powermetrics` directly from the main app process.
 
-Included helper scaffold:
+Included helper scaffolds:
 - `scripts/macos/resourcescope-gpu-helper.sh`
+- `scripts/macos/resourcescope-gpu-helper-json.sh`
 
 Suggested install path:
 - `/usr/local/bin/resourcescope-gpu-helper`
 
 Backend behavior:
-- if `RESOURCESCOPE_GPU_HELPER` is set, ResourceScope tries that command first
-- otherwise it looks for `/usr/local/bin/resourcescope-gpu-helper`
+- if `RESOURCESCOPE_GPU_HELPER_JSON` is set, ResourceScope tries that JSON helper first
+- otherwise it looks for `/usr/local/bin/resourcescope-gpu-helper-json`
+- then it falls back to `RESOURCESCOPE_GPU_HELPER`
+- then `/usr/local/bin/resourcescope-gpu-helper`
 - if no helper exists, it falls back to direct `powermetrics` and then to non-elevated sources
 
 This keeps the main app usable without admin while allowing fuller telemetry when a deliberate elevated helper is installed.

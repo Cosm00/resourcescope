@@ -77,6 +77,7 @@ mod platform {
         active_residency_pct: Option<f32>,
         frequency_mhz: Option<u64>,
         power_mw: Option<u64>,
+        backend: Option<String>,
         notes: Option<String>,
     }
 
@@ -195,6 +196,9 @@ mod platform {
         if let Some(active) = power_metrics.active_residency_pct {
             info.utilization_pct = Some(active);
         }
+        if let Some(backend) = power_metrics.backend.clone() {
+            info.backend = backend;
+        }
         info.notes = Some(match power_metrics.notes {
             Some(extra) => format!("Using discovered IORegistry class {class_name}. {extra}"),
             None => format!("Using discovered IORegistry class {class_name}. Temperature is not exposed by this backend."),
@@ -257,7 +261,9 @@ mod platform {
     fn collect_powermetrics_gpu_info() -> PowerMetricsGpuInfo {
         let helper_cmd = std::env::var("RESOURCESCOPE_GPU_HELPER")
             .unwrap_or_else(|_| "/usr/local/bin/resourcescope-gpu-helper".to_string());
-        let shell_cmd = format!("if [ -x \"{helper_cmd}\" ]; then \"{helper_cmd}\"; else powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true; fi");
+        let json_helper_cmd = std::env::var("RESOURCESCOPE_GPU_HELPER_JSON")
+            .unwrap_or_else(|_| "/usr/local/bin/resourcescope-gpu-helper-json".to_string());
+        let shell_cmd = format!("if [ -x \"{json_helper_cmd}\" ]; then \"{json_helper_cmd}\"; elif [ -x \"{helper_cmd}\" ]; then \"{helper_cmd}\"; else powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true; fi");
         let output = match Command::new("/usr/bin/env")
             .args(["sh", "-lc", &shell_cmd])
             .output()
@@ -273,12 +279,17 @@ mod platform {
 
         if text.trim().is_empty() {
             return PowerMetricsGpuInfo {
-                notes: Some(format!("powermetrics needs elevated privileges; configure and run an elevated helper at {} (or set RESOURCESCOPE_GPU_HELPER) for fuller macOS GPU telemetry.", helper_cmd)),
+                notes: Some(format!("powermetrics needs elevated privileges; configure and run an elevated helper at {} or {} (or set RESOURCESCOPE_GPU_HELPER / RESOURCESCOPE_GPU_HELPER_JSON) for fuller macOS GPU telemetry.", helper_cmd, json_helper_cmd)),
                 ..Default::default()
             };
         }
 
+        if let Some(info) = parse_helper_json_output(&text) {
+            return info;
+        }
+
         let mut info = PowerMetricsGpuInfo::default();
+        info.backend = Some("macos-powermetrics".to_string());
         info.active_residency_pct = extract_plist_real(&text, "gpu_active_residency_pct").map(|v| v as f32);
         info.frequency_mhz = extract_plist_real(&text, "freq_hz").map(|v| (v / 1_000_000.0) as u64);
         info.power_mw = extract_plist_real(&text, "power_mw").map(|v| v as u64);
@@ -423,6 +434,17 @@ mod platform {
         } else {
             digits.parse().ok()
         }
+    }
+
+    fn parse_helper_json_output(text: &str) -> Option<PowerMetricsGpuInfo> {
+        let value: serde_json::Value = serde_json::from_str(text).ok()?;
+        Some(PowerMetricsGpuInfo {
+            active_residency_pct: value.get("active_residency_pct").and_then(|v| v.as_f64()).map(|v| v as f32),
+            frequency_mhz: value.get("frequency_mhz").and_then(|v| v.as_u64()),
+            power_mw: value.get("power_mw").and_then(|v| v.as_u64()),
+            backend: value.get("backend").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            notes: value.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        })
     }
 
     fn extract_plist_real(s: &str, key: &str) -> Option<f64> {
