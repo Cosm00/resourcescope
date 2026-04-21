@@ -19,12 +19,15 @@ export default function GpuPanel() {
             <div>
               <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>GPU Usage</div>
               <div className="text-4xl font-bold tabular-nums mt-1" style={{ color: 'var(--text-primary)' }}>
-                {gpu ? gpuPct.toFixed(1) : '—'}<span className="text-xl" style={{ color: 'var(--text-muted)' }}>{gpu ? '%' : ''}</span>
+                {gpu && gpu.utilization_pct !== null ? gpuPct.toFixed(1) : '—'}<span className="text-xl" style={{ color: 'var(--text-muted)' }}>{gpu && gpu.utilization_pct !== null ? '%' : ''}</span>
+              </div>
+              <div className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                {gpu ? usageSubtitle(gpu) : 'No GPU telemetry backend is active right now.'}
               </div>
             </div>
-            <GaugeRing value={gpu ? gpuPct : 0} size={88} strokeWidth={8} color={gpuPct > 80 ? 'var(--accent-red)' : gpuPct > 60 ? 'var(--accent-orange)' : 'var(--accent-pink)'} />
+            <GaugeRing value={gpu && gpu.utilization_pct !== null ? gpuPct : 0} size={88} strokeWidth={8} color={gpuPct > 80 ? 'var(--accent-red)' : gpuPct > 60 ? 'var(--accent-orange)' : 'var(--accent-pink)'} />
           </div>
-          <Sparkline data={gpu ? gpuHistory : []} color="var(--accent-pink)" height={48} fill />
+          <Sparkline data={gpu && gpu.utilization_pct !== null ? gpuHistory : []} color="var(--accent-pink)" height={48} fill />
         </div>
 
         <InfoTile label="Temperature" value={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : '—'} accent="var(--accent-orange)" />
@@ -58,7 +61,7 @@ export default function GpuPanel() {
       <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>What this tab is for</div>
         <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-          GPU support is now backend-driven and intentionally honest. Some platforms expose rich device telemetry, others only partial adapter data. This tab focuses on reliable device-level stats and shows the active backend/support level instead of faking per-process GPU ownership.
+          GPU support is backend-driven and intentionally honest. Some systems expose live utilization, others only adapter identity, memory pools, or vendor-specific counters. ResourceScope shows the active backend and support level directly so missing fields read as unsupported telemetry — not as broken UI.
         </p>
       </div>
     </div>
@@ -72,6 +75,14 @@ function InfoTile({ label, value, accent }: { label: string; value: string; acce
       <span className="text-lg font-bold tabular-nums truncate" style={{ color: accent }}>{value}</span>
     </div>
   )
+}
+
+function usageSubtitle(gpu: any) {
+  if (!gpu) return 'No GPU telemetry backend is active right now.'
+  if (gpu.utilization_pct !== null) {
+    return `${gpu.backend} is reporting live GPU utilization.`
+  }
+  return `${gpu.backend} is active, but this machine is only exposing ${gpu.support_level} telemetry right now.`
 }
 
 function formatMemoryUsage(gpu: any) {
