@@ -1,6 +1,6 @@
 [package]
 name = "resourcescope"
-version = "1.1.5"
+version = "1.1.6"
 description = "A clean, low-overhead system resource monitor for macOS, Windows, and Linux."
 authors = ["cosm00"]
 license = "MIT"
@@ -30,6 +30,7 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
+    "Win32_System_Performance",
 ] }
 
 
