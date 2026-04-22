@@ -115,12 +115,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </ClickableCard>
         </div>
 
-        <div className="grid grid-cols-3 gap-3" style={{ minHeight: 0, height: 160 }}>
-          <div className="col-span-2 min-h-0"><CoreGrid /></div>
-          <NetworkCard />
+        <div className="grid grid-cols-3 gap-3 items-stretch" style={{ minHeight: 0, height: 190 }}>
+          <div className="col-span-2 min-h-0 h-full"><CoreGrid /></div>
+          <div className="min-h-0 h-full"><NetworkCard /></div>
         </div>
 
-        <ProcessTable />
+        <div className="min-h-0 -mt-1">
+          <ProcessTable />
+        </div>
       </div>
 
       <div className="w-[220px] flex-shrink-0 overflow-hidden">
