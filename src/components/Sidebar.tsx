@@ -15,6 +15,7 @@ const navItems: NavItem[] = [
   { id: 'disk', icon: <DiskIcon />, label: 'Disk' },
   { id: 'network', icon: <NetIcon />, label: 'Network' },
   { id: 'processes', icon: <ProcIcon />, label: 'Processes' },
+  { id: 'history', icon: <HistoryIcon />, label: 'History' },
 ]
 
 const bottomItems: NavItem[] = [
@@ -154,6 +155,13 @@ function ProcIcon() {
     <line x1="3" y1="5" x2="17" y2="5" strokeLinecap="round"/>
     <line x1="3" y1="10" x2="13" y2="10" strokeLinecap="round"/>
     <line x1="3" y1="15" x2="10" y2="15" strokeLinecap="round"/>
+  </svg>
+}
+function HistoryIcon() {
+  return <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M3.5 10a6.5 6.5 0 1 0 1.9-4.6" strokeLinecap="round"/>
+    <path d="M3 3.5v3h3" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M10 6.5V10l2.5 1.5" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 }
 function SettingsIcon() {

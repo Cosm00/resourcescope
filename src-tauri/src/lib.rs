@@ -1,5 +1,6 @@
 mod battery;
 mod gpu;
+mod history;
 mod metrics;
 mod processes;
 
@@ -21,6 +22,7 @@ use tauri::ActivationPolicy;
 
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
+type HistoryState = Arc<Mutex<history::History>>;
 type IntervalState = Arc<AtomicU64>;
 type MenubarStatsState = Arc<AtomicBool>;
 type MenubarModeState = Arc<Mutex<String>>;
@@ -36,6 +38,7 @@ const MENU_TOGGLE_WINDOW: &str = "toggle_window";
 const MENU_SHOW_WINDOW: &str = "show_window";
 const MENU_HIDE_WINDOW: &str = "hide_window";
 const MENU_QUIT: &str = "quit";
+const HISTORY_SAVE_EVERY: Duration = Duration::from_secs(60);
 
 /// A panic while collecting must not take every later command down with it.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -73,6 +76,38 @@ async fn get_process_details(
     tauri::async_runtime::spawn_blocking(move || lock(&collector).process_details(pid))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Downsampled history for the last `range_secs` (up to 30 days).
+#[tauri::command]
+fn get_history(range_secs: u64, state: tauri::State<HistoryState>) -> Vec<history::HistoryPoint> {
+    lock(&state).query(range_secs.saturating_mul(1000), metrics::now_ms())
+}
+
+#[tauri::command]
+async fn export_history_csv(range_secs: u64, path: String, state: tauri::State<'_, HistoryState>) -> Result<usize, String> {
+    let samples = lock(&state).export_samples(range_secs.saturating_mul(1000), metrics::now_ms());
+    let count = samples.len();
+    let target = std::path::PathBuf::from(&path);
+    tauri::async_runtime::spawn_blocking(move || history::write_csv(&target, &samples))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Could not write {}: {e}", path))?;
+    Ok(count)
+}
+
+/// Append each 10-second sample to a daily CSV file in the app's log folder.
+/// Returns that folder so the UI can reveal it.
+#[tauri::command]
+fn set_csv_logging(enabled: bool, state: tauri::State<HistoryState>) -> Option<String> {
+    let mut h = lock(&state);
+    h.csv_logging = enabled;
+    let dir = h.log_dir()?;
+    if enabled {
+        // Create it now so "Show folder" works before the first row lands.
+        let _ = std::fs::create_dir_all(dir);
+    }
+    Some(dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -345,6 +380,7 @@ fn menubar_title(mode: &str, snapshot: &MetricsSnapshot) -> String {
 fn start_metrics_loop(
     app: AppHandle,
     state: CollectorState,
+    history: HistoryState,
     interval_state: IntervalState,
     menubar_stats_state: MenubarStatsState,
     menubar_mode_state: MenubarModeState,
@@ -358,9 +394,18 @@ fn start_metrics_loop(
             std::thread::sleep(Duration::from_millis(interval_state.load(Ordering::Relaxed)));
 
             let mut last_menubar_update: Option<Instant> = None;
+            let mut last_history_save = Instant::now();
             loop {
                 let tick_started = Instant::now();
                 let snapshot = lock(&state).collect();
+                {
+                    let mut h = lock(&history);
+                    h.ingest(&snapshot);
+                    if last_history_save.elapsed() >= HISTORY_SAVE_EVERY {
+                        h.save_if_dirty();
+                        last_history_save = Instant::now();
+                    }
+                }
                 if let Err(e) = app.emit("metrics_update", &snapshot) {
                     eprintln!("emit error: {e}");
                 }
@@ -418,6 +463,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(collector)
         .manage(interval_state)
         .manage(menubar_stats_state)
@@ -428,6 +474,9 @@ pub fn run() {
             get_metrics,
             get_platform_info,
             get_process_details,
+            get_history,
+            export_history_csv,
+            set_csv_logging,
             set_full_process_list,
             set_refresh_interval,
             hide_to_tray,
@@ -457,10 +506,17 @@ pub fn run() {
             }
             set_launch_presence(app.handle(), true);
 
+            let history: HistoryState = Arc::new(Mutex::new(history::History::new(
+                app.path().app_data_dir().ok().map(|d| d.join("history.bin")),
+                app.path().app_log_dir().ok(),
+            )));
+            app.manage(Arc::clone(&history));
+
             let handle = app.handle().clone();
             start_metrics_loop(
                 handle,
                 collector_for_loop,
+                history,
                 interval_for_loop,
                 menubar_stats_for_loop,
                 menubar_mode_for_loop,
@@ -468,8 +524,16 @@ pub fn run() {
             );
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Keep the last minute of history across restarts.
+                if let Some(h) = app.try_state::<HistoryState>() {
+                    lock(&h).save_if_dirty();
+                }
+            }
+        });
 }
 
 #[cfg(test)]
