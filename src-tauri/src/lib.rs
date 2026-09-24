@@ -1,8 +1,13 @@
 mod gpu;
 mod metrics;
 
-use metrics::{scan_directory_usage, DiskScanResult, MetricsCollector, MetricsSnapshot};
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
+use metrics::{is_system_mount, scan_directory_usage, DiskScanResult, MetricsCollector, MetricsSnapshot};
+use serde::Serialize;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex, MutexGuard,
+};
+use std::time::{Duration, Instant};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -15,9 +20,13 @@ use tauri::ActivationPolicy;
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
 type IntervalState = Arc<AtomicU64>;
-type MenubarStatsState = Arc<std::sync::atomic::AtomicBool>;
+type MenubarStatsState = Arc<AtomicBool>;
 type MenubarModeState = Arc<Mutex<String>>;
 struct MenubarIntervalState(Arc<AtomicU64>);
+/// Whether a tray icon was successfully created. Some Linux desktops (e.g.
+/// stock GNOME without an AppIndicator extension) have no tray; hiding the
+/// window there would make it unrecoverable, so close-to-tray is disabled.
+struct TrayAvailable(AtomicBool);
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "resourcescope-tray";
@@ -26,13 +35,24 @@ const MENU_SHOW_WINDOW: &str = "show_window";
 const MENU_HIDE_WINDOW: &str = "hide_window";
 const MENU_QUIT: &str = "quit";
 
+/// A panic while collecting must not take every later command down with it.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
+//
+// Commands that touch the filesystem or the collector are `async` and run on
+// the blocking pool. Synchronous Tauri commands execute on the main thread,
+// so a slow collect (macOS powermetrics) or a disk scan would freeze the UI.
 
 /// One-shot snapshot — used for initial load before event loop kicks in
 #[tauri::command]
-fn get_metrics(state: tauri::State<CollectorState>) -> MetricsSnapshot {
-    let mut collector = state.lock().unwrap();
-    collector.collect()
+async fn get_metrics(state: tauri::State<'_, CollectorState>) -> Result<MetricsSnapshot, String> {
+    let collector = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || lock(&collector).collect())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -44,18 +64,45 @@ fn set_refresh_interval(interval_ms: u64, state: tauri::State<IntervalState>) ->
 
 #[tauri::command]
 fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    if !tray_available(&app) {
+        return Err("No system tray is available on this desktop, so the window can't be hidden to it.".into());
+    }
     hide_main_window(&app).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct PlatformInfo {
+    os: &'static str,
+    tray_available: bool,
+    /// Whether the tray can show text next to the icon (macOS menubar; Linux
+    /// AppIndicator labels). Windows tray icons are icon-only.
+    tray_title_supported: bool,
+}
+
 #[tauri::command]
-fn set_show_menubar_stats(show: bool, state: tauri::State<MenubarStatsState>) -> Result<(), String> {
+fn get_platform_info(app: AppHandle) -> PlatformInfo {
+    PlatformInfo {
+        os: std::env::consts::OS,
+        tray_available: tray_available(&app),
+        tray_title_supported: cfg!(any(target_os = "macos", target_os = "linux")),
+    }
+}
+
+#[tauri::command]
+fn set_show_menubar_stats(app: AppHandle, show: bool, state: tauri::State<MenubarStatsState>) -> Result<(), String> {
     state.store(show, Ordering::Relaxed);
+    if !show {
+        // Clear the stale text immediately instead of leaving the last value.
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_title(None::<&str>);
+        }
+    }
     Ok(())
 }
 
 #[tauri::command]
 fn set_menubar_mode(mode: String, state: tauri::State<MenubarModeState>) -> Result<(), String> {
-    *state.lock().unwrap() = mode;
+    *lock(&state) = mode;
     Ok(())
 }
 
@@ -66,27 +113,44 @@ fn set_menubar_refresh_interval(interval_ms: u64, state: tauri::State<MenubarInt
 }
 
 #[tauri::command]
-fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
-    Ok(scan_directory_usage(&path))
+async fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_directory_usage(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn terminate_process(pid: u32, force: bool, state: tauri::State<CollectorState>) -> Result<(), String> {
-    use sysinfo::{Pid, ProcessesToUpdate, Signal};
+    use sysinfo::{Pid, Signal};
 
-    let mut collector = state.lock().map_err(|_| "collector lock poisoned".to_string())?;
-    collector.sys.refresh_processes(ProcessesToUpdate::All, true);
+    if pid == std::process::id() {
+        return Err("Refusing to terminate ResourceScope itself.".into());
+    }
+
+    let mut collector = lock(&state);
+    let target = Pid::from_u32(pid);
+    collector.refresh_process(target);
 
     let proc = collector
         .sys
-        .process(Pid::from_u32(pid))
+        .process(target)
         .ok_or_else(|| format!("Process {pid} not found"))?;
 
-    let signal = if force { Signal::Kill } else { Signal::Term };
+    // Windows has no SIGTERM; sysinfo only supports Kill there, which maps to
+    // TerminateProcess. Fall back to it so "End process" works everywhere.
+    let signal = if force || cfg!(windows) { Signal::Kill } else { Signal::Term };
     match proc.kill_with(signal) {
         Some(true) => Ok(()),
-        Some(false) => Err(format!("Failed to terminate process {pid}")),
-        None => Err(format!("Terminate action is not supported on this platform for process {pid}")),
+        Some(false) => Err(format!(
+            "Failed to terminate process {pid}. It may belong to another user or require elevated privileges."
+        )),
+        None => {
+            if proc.kill() {
+                Ok(())
+            } else {
+                Err(format!("Failed to terminate process {pid}"))
+            }
+        }
     }
 }
 
@@ -101,6 +165,12 @@ fn toggle_main_window_command(app: AppHandle) -> Result<(), String> {
 }
 
 // ─── Window / tray helpers ────────────────────────────────────────────────────
+
+fn tray_available(app: &AppHandle) -> bool {
+    app.try_state::<TrayAvailable>()
+        .map(|s| s.0.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
 
 fn with_main_window<F>(app: &AppHandle, f: F) -> tauri::Result<()>
 where
@@ -200,7 +270,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let _ = toggle_main_window(&tray.app_handle());
+                let _ = toggle_main_window(tray.app_handle());
             }
         })
         .build(app)?;
@@ -208,61 +278,101 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Human-readable byte rate for the tray title, e.g. `1.2M`, `340K`.
+fn fmt_rate_short(bps: u64) -> String {
+    let b = bps as f64;
+    if b >= 1e9 {
+        format!("{:.1}G", b / 1e9)
+    } else if b >= 1e6 {
+        format!("{:.1}M", b / 1e6)
+    } else if b >= 1e3 {
+        format!("{:.0}K", b / 1e3)
+    } else {
+        format!("{}B", bps)
+    }
+}
+
+fn menubar_title(mode: &str, snapshot: &MetricsSnapshot) -> String {
+    match mode {
+        "cpu" => format!("CPU {:>3.0}%", snapshot.cpu.usage_pct),
+        "memory" => format!("MEM {:>3.0}%", snapshot.memory.usage_pct),
+        "network" => {
+            let recv: u64 = snapshot.networks.iter().map(|n| n.recv_bps).sum();
+            let sent: u64 = snapshot.networks.iter().map(|n| n.sent_bps).sum();
+            format!("↓{}/s ↑{}/s", fmt_rate_short(recv), fmt_rate_short(sent))
+        }
+        "disk" => {
+            let system = snapshot
+                .disks
+                .iter()
+                .find(|d| is_system_mount(&d.mount_point))
+                .or_else(|| snapshot.disks.first());
+            format!("DSK {:>3.0}%", system.map(|d| d.usage_pct).unwrap_or(0.0))
+        }
+        _ => format!("CPU {:>3.0}%  MEM {:>3.0}%", snapshot.cpu.usage_pct, snapshot.memory.usage_pct),
+    }
+}
+
 // ─── Background event loop ────────────────────────────────────────────────────
 
-/// Spawn background task that emits "metrics_update" at a dynamic interval.
+/// Spawn a dedicated thread that emits "metrics_update" at a dynamic interval.
 /// The interval is read from `interval_state` each tick, so changes take effect
-/// on the next cycle without restarting the task.
-fn start_metrics_loop(app: AppHandle, state: CollectorState, interval_state: IntervalState, menubar_stats_state: MenubarStatsState, menubar_mode_state: MenubarModeState, menubar_interval_state: MenubarIntervalState) {
-    tokio::spawn(async move {
-        // Consume the first immediate tick to avoid a burst on startup
-        let initial_ms = interval_state.load(Ordering::Relaxed);
-        tokio::time::sleep(std::time::Duration::from_millis(initial_ms)).await;
+/// on the next cycle without restarting.
+///
+/// Collection is blocking work (sysinfo syscalls, spawning ioreg/nvidia-smi),
+/// so it runs on its own OS thread rather than an async task where it would
+/// stall the runtime's worker threads.
+fn start_metrics_loop(
+    app: AppHandle,
+    state: CollectorState,
+    interval_state: IntervalState,
+    menubar_stats_state: MenubarStatsState,
+    menubar_mode_state: MenubarModeState,
+    menubar_interval_state: MenubarIntervalState,
+) {
+    let spawn = std::thread::Builder::new()
+        .name("resourcescope-metrics".into())
+        .spawn(move || {
+            // Let the initial `get_metrics` invoke land first; sysinfo also needs
+            // a gap between refreshes for meaningful CPU percentages.
+            std::thread::sleep(Duration::from_millis(interval_state.load(Ordering::Relaxed)));
 
-        let mut menubar_tick = 0u64;
-        loop {
-            let snapshot = {
-                let mut col = state.lock().unwrap();
-                col.collect()
-            };
-            if let Err(e) = app.emit("metrics_update", &snapshot) {
-                eprintln!("emit error: {e}");
-            }
-
-            menubar_tick = menubar_tick.saturating_add(initial_ms.max(1));
-            let menubar_ms = menubar_interval_state.0.load(Ordering::Relaxed);
-
-            if menubar_stats_state.load(Ordering::Relaxed) && menubar_tick >= menubar_ms {
-                menubar_tick = 0;
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    let mode = menubar_mode_state.lock().unwrap().clone();
-                    let title = match mode.as_str() {
-                        "cpu" => format!("CPU {:>3.0}%", snapshot.cpu.usage_pct),
-                        "memory" => format!("MEM {:>3.0}%", snapshot.memory.usage_pct),
-                        "network" => {
-                            let recv: u64 = snapshot.networks.iter().map(|n| n.recv_bps).sum();
-                            format!("NET ↓{}", recv / 1000)
-                        }
-                        "disk" => {
-                            let primary = snapshot.disks.first().map(|d| d.usage_pct).unwrap_or(0.0);
-                            format!("DSK {:>3.0}%", primary)
-                        }
-                        _ => format!("CPU {:>3.0}%  MEM {:>3.0}%", snapshot.cpu.usage_pct, snapshot.memory.usage_pct),
-                    };
-                    let _ = tray.set_title(Some(title));
-                    let _ = tray.set_tooltip(Some(format!(
-                        "ResourceScope\nCPU: {:.1}%\nMemory: {:.1}%\nProcesses: {}",
-                        snapshot.cpu.usage_pct,
-                        snapshot.memory.usage_pct,
-                        snapshot.processes.len()
-                    )));
+            let mut last_menubar_update: Option<Instant> = None;
+            loop {
+                let tick_started = Instant::now();
+                let snapshot = lock(&state).collect();
+                if let Err(e) = app.emit("metrics_update", &snapshot) {
+                    eprintln!("emit error: {e}");
                 }
-            }
 
-            let ms = interval_state.load(Ordering::Relaxed);
-            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-        }
-    });
+                let menubar_ms = menubar_interval_state.0.load(Ordering::Relaxed);
+                let menubar_due = last_menubar_update
+                    .map(|t| t.elapsed() + Duration::from_millis(50) >= Duration::from_millis(menubar_ms))
+                    .unwrap_or(true);
+
+                if menubar_due {
+                    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                        last_menubar_update = Some(Instant::now());
+                        if menubar_stats_state.load(Ordering::Relaxed) {
+                            let mode = lock(&menubar_mode_state).clone();
+                            let _ = tray.set_title(Some(menubar_title(&mode, &snapshot)));
+                        }
+                        // Tooltips work on every platform (Windows trays are icon-only).
+                        let _ = tray.set_tooltip(Some(format!(
+                            "ResourceScope\nCPU: {:.1}%\nMemory: {:.1}%",
+                            snapshot.cpu.usage_pct, snapshot.memory.usage_pct,
+                        )));
+                    }
+                }
+
+                // Keep a steady cadence: subtract the time spent collecting.
+                let interval = Duration::from_millis(interval_state.load(Ordering::Relaxed));
+                std::thread::sleep(interval.saturating_sub(tick_started.elapsed()).max(Duration::from_millis(100)));
+            }
+        });
+    if let Err(e) = spawn {
+        eprintln!("failed to start metrics thread: {e}");
+    }
 }
 
 // ─── App entry ────────────────────────────────────────────────────────────────
@@ -275,7 +385,7 @@ pub fn run() {
     // Default interval: 1500ms — changeable at runtime via set_refresh_interval
     let interval_state: IntervalState = Arc::new(AtomicU64::new(1500));
     let interval_for_loop = Arc::clone(&interval_state);
-    let menubar_stats_state: MenubarStatsState = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let menubar_stats_state: MenubarStatsState = Arc::new(AtomicBool::new(true));
     let menubar_stats_for_loop = Arc::clone(&menubar_stats_state);
     let menubar_mode_state: MenubarModeState = Arc::new(Mutex::new("cpu_mem".to_string()));
     let menubar_mode_for_loop = Arc::clone(&menubar_mode_state);
@@ -289,8 +399,10 @@ pub fn run() {
         .manage(menubar_stats_state)
         .manage(menubar_mode_state)
         .manage(menubar_interval_state)
+        .manage(TrayAvailable(AtomicBool::new(false)))
         .invoke_handler(tauri::generate_handler![
             get_metrics,
+            get_platform_info,
             set_refresh_interval,
             hide_to_tray,
             set_show_menubar_stats,
@@ -304,20 +416,45 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == MAIN_WINDOW_LABEL {
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = hide_main_window(&window.app_handle());
+                    // Only intercept close when there's a tray to come back from.
+                    if tray_available(window.app_handle()) {
+                        api.prevent_close();
+                        let _ = hide_main_window(window.app_handle());
+                    }
                 }
             }
         })
         .setup(|app| {
-            build_tray(&app.handle())?;
-            set_launch_presence(&app.handle(), true);
+            match build_tray(app.handle()) {
+                Ok(()) => app.state::<TrayAvailable>().0.store(true, Ordering::Relaxed),
+                Err(e) => eprintln!("system tray unavailable, close will quit instead of hiding: {e}"),
+            }
+            set_launch_presence(app.handle(), true);
 
-            // Start background metrics emission (dynamic interval via AtomicU64)
             let handle = app.handle().clone();
-            start_metrics_loop(handle, collector_for_loop, interval_for_loop, menubar_stats_for_loop, menubar_mode_for_loop, menubar_interval_for_loop);
+            start_metrics_loop(
+                handle,
+                collector_for_loop,
+                interval_for_loop,
+                menubar_stats_for_loop,
+                menubar_mode_for_loop,
+                menubar_interval_for_loop,
+            );
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fmt_rate_short;
+
+    #[test]
+    fn rate_formatting() {
+        assert_eq!(fmt_rate_short(512), "512B");
+        assert_eq!(fmt_rate_short(340_000), "340K");
+        assert_eq!(fmt_rate_short(1_250_000), "1.2M");
+        assert_eq!(fmt_rate_short(2_000_000_000), "2.0G");
+    }
 }
