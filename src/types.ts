@@ -32,6 +32,7 @@ export interface GpuInfo {
   memory_total_bytes: number | null
   temperature_c: number | null
   power_state: number | null
+  frequency_mhz: number | null
   last_submission_pid: number | null
   adapter_index: number | null
   backend: string
@@ -76,6 +77,36 @@ export interface ProcessInfo {
   friendly_name: string | null
   explanation: string | null
   bundle_hint: string | null
+}
+
+export interface DirectoryUsage {
+  path: string
+  name: string
+  bytes: number
+  usage_pct_of_parent: number
+  is_dir: boolean
+}
+
+export interface PathCrumb {
+  name: string
+  path: string
+}
+
+export interface DiskScanResult {
+  root_path: string
+  total_bytes: number
+  scanned_entries: number
+  children: DirectoryUsage[]
+  /** Scan stopped at its entry/time budget; sizes are lower bounds. */
+  truncated: boolean
+  /** Ancestors of root_path, built natively (handles `C:\`, UNC, `/`). */
+  breadcrumbs: PathCrumb[]
+}
+
+export interface PlatformInfo {
+  os: 'macos' | 'windows' | 'linux' | string
+  tray_available: boolean
+  tray_title_supported: boolean
 }
 
 export interface HealthInfo {

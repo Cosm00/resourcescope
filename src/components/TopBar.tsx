@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore } from '../store/metricsStore'
+import { usePlatformStore } from '../store/platformStore'
 
 export default function TopBar() {
   const [time, setTime] = useState(new Date())
   const snapshot = useMetricsStore(s => s.snapshot)
   const health = useMetricsStore(s => s.health)
+  const trayAvailable = usePlatformStore(s => s.info?.tray_available ?? false)
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
@@ -59,7 +61,7 @@ export default function TopBar() {
 
       {/* Right */}
       <div className="flex items-center gap-3">
-        <button
+        {trayAvailable && <button
           type="button"
           onClick={hideToTray}
           className="h-9 px-3 rounded-xl text-xs font-semibold transition-opacity hover:opacity-90"
@@ -71,7 +73,7 @@ export default function TopBar() {
           title="Hide ResourceScope to the system tray"
         >
           Hide to tray
-        </button>
+        </button>}
 
         <div className="text-right">
           <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
