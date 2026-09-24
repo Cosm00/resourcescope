@@ -39,7 +39,7 @@ Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 18+
+- [Node.js](https://nodejs.org/) 22.12+
 - Tauri prerequisites for your OS → [Tauri v2 prerequisites guide](https://tauri.app/start/prerequisites/)
 
 ### Development

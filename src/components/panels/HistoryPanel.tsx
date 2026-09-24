@@ -5,6 +5,7 @@ import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, T
 import { fmtBps } from '../../store/metricsStore'
 import { fmtTemp } from '../../store/settingsStore'
 import type { HistoryPoint } from '../../types'
+import { shortRate } from '../../lib/format'
 
 const RANGES = [
   { label: '1h', secs: 3600 },
@@ -51,38 +52,34 @@ interface ChartDef {
 const pct = (v: number) => `${v.toFixed(0)}%`
 const PCT_TICKS = [0, 25, 50, 75, 100]
 
-/** Short axis labels for byte rates: 950, 4.5K, 270M, 1.2G. */
-function shortRate(v: number) {
-  const units = ['', 'K', 'M', 'G', 'T']
-  let i = 0
-  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++ }
-  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)}${units[i]}`
-}
 
 export default function HistoryPanel() {
   const [range, setRange] = useState<Range>(RANGES[0])
-  const [points, setPoints] = useState<HistoryPoint[]>([])
-  const [loading, setLoading] = useState(true)
+  // Tagged with the range they belong to, so switching ranges shows the
+  // loading state until fresh data arrives.
+  const [data, setData] = useState<{ range: string; points: HistoryPoint[] } | null>(null)
+  const points = useMemo(() => (data?.range === range.label ? data.points : []), [data, range])
+  const loading = data?.range !== range.label
   const [showTable, setShowTable] = useState(false)
   const [exportMsg, setExportMsg] = useState<string | null>(null)
 
   const load = useCallback(() => {
     invoke<HistoryPoint[]>('get_history', { rangeSecs: range.secs })
-      .then(setPoints)
-      .catch(err => console.warn('[ResourceScope] History failed:', err))
-      .finally(() => setLoading(false))
+      .then(p => setData({ range: range.label, points: p }))
+      .catch(err => {
+        console.warn('[ResourceScope] History failed:', err)
+        setData({ range: range.label, points: [] })
+      })
   }, [range])
 
   useEffect(() => {
-    setLoading(true)
     load()
     const t = setInterval(load, REFRESH_MS)
     return () => clearInterval(t)
   }, [load])
 
-  const has = (key: keyof HistoryPoint) => points.some(p => p[key] !== null)
-
   const charts = useMemo<ChartDef[]>(() => {
+    const has = (key: keyof HistoryPoint) => points.some(p => p[key] !== null)
     const list: ChartDef[] = [
       {
         title: 'CPU',
@@ -117,7 +114,6 @@ export default function HistoryPanel() {
     if (has('cpu_temp_c')) list.push({ title: 'CPU temperature', series: [{ key: 'cpu_temp_c', label: 'Temperature', color: 'var(--accent-orange)' }], format: v => fmtTemp(v), area: true })
     if (has('battery_pct')) list.push({ title: 'Battery', series: [{ key: 'battery_pct', label: 'Charge', color: 'var(--accent-green)' }], format: pct, domain: [0, 100], area: true })
     return list
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points])
 
   const exportCsv = async () => {
