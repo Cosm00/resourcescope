@@ -653,8 +653,47 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A small, deterministic snapshot for logic tests elsewhere.
+    pub(crate) fn fake_snapshot() -> MetricsSnapshot {
+        let proc = |pid: u32, name: &str, cpu: f32, mem: u64| ProcessInfo {
+            pid,
+            name: name.into(),
+            cpu_pct: cpu,
+            mem_bytes: mem,
+            disk_read_bps: 0,
+            disk_write_bps: 0,
+            status: "Run".into(),
+            parent_pid: None,
+            parent_name: None,
+            exe_path: None,
+            user: None,
+            app_name: name.into(),
+            group_key: format!("name:{name}"),
+            process_kind: "background-process".into(),
+            friendly_name: None,
+            run_time_secs: 10,
+        };
+        MetricsSnapshot {
+            timestamp: 1_000,
+            cpu: CpuInfo { usage_pct: 10.0, core_usage: vec![10.0; 4], core_count: 4, model: "Test CPU".into(), load_avg: [0.0; 3], frequency_mhz: 3000 },
+            memory: MemInfo { total_bytes: 16_000_000_000, used_bytes: 4_000_000_000, available_bytes: 12_000_000_000, usage_pct: 25.0, swap_total_bytes: 0, swap_used_bytes: 0 },
+            gpu: None,
+            batteries: vec![],
+            disks: vec![DiskInfo {
+                name: "disk0".into(), mount_point: "/".into(), fs_type: "ext4".into(),
+                total_bytes: 100_000_000_000, used_bytes: 50_000_000_000, available_bytes: 50_000_000_000,
+                usage_pct: 50.0, is_removable: false, read_bps: 0, write_bps: 0,
+            }],
+            networks: vec![],
+            processes: vec![proc(1, "idle", 0.5, 10_000_000), proc(2, "busy", 88.0, 500_000_000)],
+            process_count: 2,
+            processes_truncated: false,
+            health: HealthInfo { cpu_temp: None, gpu_temp: None, overall: "good".into() },
+        }
+    }
 
     #[test]
     fn loopback_detection_is_cross_platform() {
