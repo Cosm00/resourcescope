@@ -161,3 +161,18 @@ export interface MetricsSnapshot {
   processes_truncated: boolean
   health: HealthInfo
 }
+
+/** One downsampled history bucket; null = not available / app not running. */
+export interface HistoryPoint {
+  ts: number
+  cpu_pct: number | null
+  cpu_max_pct: number | null
+  mem_pct: number | null
+  gpu_pct: number | null
+  net_recv_bps: number | null
+  net_sent_bps: number | null
+  disk_read_bps: number | null
+  disk_write_bps: number | null
+  cpu_temp_c: number | null
+  battery_pct: number | null
+}

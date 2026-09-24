@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
@@ -11,6 +11,8 @@ import DiskPanel from './components/panels/DiskPanel'
 import NetworkPanel from './components/panels/NetworkPanel'
 import ProcessesPanel from './components/panels/ProcessesPanel'
 import SettingsPanel from './components/panels/SettingsPanel'
+// Charts pull in recharts; load them only when the History tab opens.
+const HistoryPanel = lazy(() => import('./components/panels/HistoryPanel'))
 import { useMetricsStore } from './store/metricsStore'
 import { useSettingsStore } from './store/settingsStore'
 import { usePlatformStore } from './store/platformStore'
@@ -77,6 +79,13 @@ export default function App() {
     )
   }, [menubarRefreshIntervalMs])
 
+  const csvLogging = useSettingsStore(s => s.csvLogging)
+  useEffect(() => {
+    invoke('set_csv_logging', { enabled: csvLogging }).catch(err =>
+      console.warn('[ResourceScope] CSV logging toggle failed:', err),
+    )
+  }, [csvLogging])
+
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
       <Sidebar active={activeNav} onNavigate={setActiveNav} />
@@ -92,6 +101,7 @@ export default function App() {
           {activeNav === 'disk'     && <DiskPanel />}
           {activeNav === 'network'  && <NetworkPanel />}
           {activeNav === 'processes' && <ProcessesPanel />}
+          {activeNav === 'history'  && <Suspense fallback={null}><HistoryPanel /></Suspense>}
           {activeNav === 'settings' && <SettingsPanel />}
         </div>
       </div>

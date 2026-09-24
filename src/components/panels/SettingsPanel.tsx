@@ -3,6 +3,8 @@ import { useSettingsStore, type RefreshInterval, type MenubarMode } from '../../
 import { getVersion as getAppVersion } from '@tauri-apps/api/app'
 import { useState, useEffect } from 'react'
 import { usePlatformStore } from '../../store/platformStore'
+import { invoke } from '@tauri-apps/api/core'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -89,6 +91,11 @@ export default function SettingsPanel() {
   const trayAvailable = platform?.tray_available ?? true
   const titleSupported = platform?.tray_title_supported ?? true
   const trayWord = platform?.os === 'macos' ? 'menu bar' : 'tray'
+
+  const revealLogs = async () => {
+    const dir = await invoke<string | null>('set_csv_logging', { enabled: true }).catch(() => null)
+    if (dir) revealItemInDir(dir).catch(err => console.warn('[ResourceScope] Reveal failed:', err))
+  }
   const [appVersion, setAppVersion] = useState<string>('—')
 
   useEffect(() => {
@@ -127,8 +134,18 @@ export default function SettingsPanel() {
               ))}
             </div>
           </Row>
-          <Row label="Show Process Usage Bars" description="Visual bars in the process table CPU column" last>
+          <Row label="Show Process Usage Bars" description="Visual bars in the process table CPU column">
             <Toggle checked={s.showMinibar} onChange={s.setShowMinibar} />
+          </Row>
+          <Row label="Log Metrics to CSV" description="Append a 10-second sample to a daily CSV file (one file per UTC day)" last>
+            <div className="flex items-center gap-3">
+              {s.csvLogging && (
+                <button type="button" onClick={revealLogs} className="text-xs underline-offset-2 hover:underline" style={{ color: 'var(--accent-blue)' }}>
+                  Show folder
+                </button>
+              )}
+              <Toggle checked={s.csvLogging} onChange={v => s.update({ csvLogging: v })} />
+            </div>
           </Row>
         </Section>
 

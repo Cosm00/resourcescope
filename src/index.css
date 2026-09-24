@@ -22,6 +22,9 @@
     /* Translucent layers over cards (hover rows, tracks, chips). */
     --overlay-1: rgba(255,255,255,0.03);
     --overlay-2: rgba(255,255,255,0.06);
+    /* Two-series chart pair (validated for CVD separation in dark + light). */
+    --series-a: #0d9488;
+    --series-b: #ea580c;
   }
 
   body {

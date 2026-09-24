@@ -110,6 +110,14 @@ pub struct PathCrumb {
     pub path: String,
 }
 
+/// Wall-clock milliseconds since the Unix epoch.
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 // ─── Collector state ─────────────────────────────────────────────────────────
 
 pub struct MetricsCollector {
@@ -219,10 +227,7 @@ impl MetricsCollector {
         self.last_collect = Some(now);
         let per_sec = |bytes: u64| io_dt.map(|dt| (bytes as f64 / dt) as u64).unwrap_or(0);
 
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now_ms = now_ms();
 
         // ── CPU ──────────────────────────────────────────────────────────────
         let cpus = self.sys.cpus();
