@@ -33,6 +33,10 @@ struct MenubarIntervalState(Arc<AtomicU64>);
 /// stock GNOME without an AppIndicator extension) have no tray; hiding the
 /// window there would make it unrecoverable, so close-to-tray is disabled.
 struct TrayAvailable(AtomicBool);
+struct UpdaterConfigured(bool);
+
+/// Passed by the autostart entry so login launches go straight to the tray.
+const MINIMIZED_ARG: &str = "--minimized";
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "resourcescope-tray";
@@ -154,6 +158,9 @@ fn hide_to_tray(app: AppHandle) -> Result<(), String> {
 struct PlatformInfo {
     os: &'static str,
     tray_available: bool,
+    /// In-app updates need a signing public key in tauri.conf.json; without
+    /// one the UI falls back to linking to the GitHub release.
+    updater_configured: bool,
     /// Whether the tray can show text next to the icon (macOS menubar; Linux
     /// AppIndicator labels). Windows tray icons are icon-only.
     tray_title_supported: bool,
@@ -164,6 +171,7 @@ fn get_platform_info(app: AppHandle) -> PlatformInfo {
     PlatformInfo {
         os: std::env::consts::OS,
         tray_available: tray_available(&app),
+        updater_configured: app.try_state::<UpdaterConfigured>().is_some_and(|s| s.0),
         tray_title_supported: cfg!(any(target_os = "macos", target_os = "linux")),
     }
 }
@@ -504,8 +512,31 @@ pub fn run() {
     let menubar_interval_state = MenubarIntervalState(Arc::new(AtomicU64::new(1500)));
     let menubar_interval_for_loop = MenubarIntervalState(Arc::clone(&menubar_interval_state.0));
 
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    // The updater plugin refuses to start without its config, so register it
+    // only when a signing public key has been set up (see docs/auto-updates.md).
+    let updater_configured = context
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .is_some_and(|k| !k.trim().is_empty());
+
+    let mut builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    if updater_configured {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![MINIMIZED_ARG]),
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(collector)
@@ -514,6 +545,7 @@ pub fn run() {
         .manage(menubar_mode_state)
         .manage(menubar_interval_state)
         .manage(TrayAvailable(AtomicBool::new(false)))
+        .manage(UpdaterConfigured(updater_configured))
         .invoke_handler(tauri::generate_handler![
             get_metrics,
             get_platform_info,
@@ -550,7 +582,13 @@ pub fn run() {
                 Ok(()) => app.state::<TrayAvailable>().0.store(true, Ordering::Relaxed),
                 Err(e) => eprintln!("system tray unavailable, close will quit instead of hiding: {e}"),
             }
-            set_launch_presence(app.handle(), true);
+            // Launched at login: start hidden in the tray (if there is one),
+            // without flashing the window first.
+            if std::env::args().any(|a| a == MINIMIZED_ARG) && tray_available(app.handle()) {
+                let _ = hide_main_window(app.handle());
+            } else {
+                set_launch_presence(app.handle(), true);
+            }
 
             let history: HistoryState = Arc::new(Mutex::new(history::History::new(
                 app.path().app_data_dir().ok().map(|d| d.join("history.bin")),
@@ -575,7 +613,7 @@ pub fn run() {
             );
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
