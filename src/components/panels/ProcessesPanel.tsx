@@ -175,14 +175,17 @@ export default function ProcessesPanel() {
     return out
   }, [view, filtered, groups, expanded, sortKey, sortDir])
 
-  // Until the user picks something, the top row is selected so the details
-  // pane is never empty.
-  const selection: Selection = pickedSelection ?? (rows[0]
-    ? rows[0].type === 'group' ? { type: 'group', key: rows[0].group.key } : { type: 'proc', pid: rows[0].proc.pid }
-    : null)
+  // Until the user picks something, show the first row's details, but pin
+  // that choice once made so the pane doesn't jump as rankings shift each
+  // tick. (Setting state during render is React's pattern for this.)
+  if (pickedSelection === null && rows[0]) {
+    setSelection(rows[0].type === 'group' ? { type: 'group', key: rows[0].group.key } : { type: 'proc', pid: rows[0].proc.pid })
+  }
+  const selection: Selection = pickedSelection
   const selectionId = selection ? (selection.type === 'group' ? `g:${selection.key}` : `p:${selection.pid}`) : ''
   const selectedProc = selection?.type === 'proc' ? processes.find(p => p.pid === selection.pid) ?? null : null
   const selectedGroup = selection?.type === 'group' ? groups.find(g => g.key === selection.key) ?? null : null
+  const groupPids = selectedGroup ? processes.filter(p => p.group_key === selectedGroup.key).map(p => p.pid) : []
   const confirmGroup = confirmState?.sel === selectionId ? confirmState.kind : null
   const actionError = errorState?.sel === selectionId ? errorState.message : null
   const setActionError = (message: string | null) => setErrorState(message ? { sel: selectionId, message } : null)
@@ -228,7 +231,8 @@ export default function ProcessesPanel() {
       setConfirmState({ sel: selectionId, kind })
       return
     }
-    terminate(selectedGroup.procs.map(p => p.pid), force)
+    // The whole app, not just the rows the current filter happens to show.
+    terminate(groupPids, force)
   }
 
   const toggleExpanded = (key: string) =>
@@ -369,6 +373,8 @@ export default function ProcessesPanel() {
           {selectedGroup ? (
             <GroupDetails
               group={selectedGroup}
+              totalCount={groupPids.length}
+              pidList={groupPids.length > 12 ? `${groupPids.slice(0, 12).join(', ')}, …` : groupPids.join(', ')}
               labels={actionLabels}
               busy={busyAction}
               confirm={confirmGroup}
@@ -382,7 +388,7 @@ export default function ProcessesPanel() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-lg font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{selectedProc.friendly_name ?? selectedProc.name}</div>
-                    <button type="button" className="text-sm mt-1 underline-offset-2 hover:underline" style={{ color: 'var(--text-secondary)' }}
+                    <button type="button" className="block text-left text-sm mt-1 underline-offset-2 hover:underline" style={{ color: 'var(--text-secondary)' }}
                       onClick={() => { setView('apps'); setSelection({ type: 'group', key: selectedProc.group_key }) }}>
                       {selectedProc.app_name}
                     </button>
@@ -465,8 +471,10 @@ function ActionButtons({ labels, busy, onAction, confirm, countSuffix = '' }: {
   )
 }
 
-function GroupDetails({ group, labels, busy, confirm, error, onAction, onSelect }: {
+function GroupDetails({ group, totalCount, pidList, labels, busy, confirm, error, onAction, onSelect }: {
   group: AppGroup
+  totalCount: number
+  pidList: string
   labels: Labels
   busy: 'quit' | 'force' | null
   confirm: 'quit' | 'force' | null
@@ -485,7 +493,11 @@ function GroupDetails({ group, labels, busy, confirm, error, onAction, onSelect 
         </div>
         <ActionButtons labels={labels} busy={busy} confirm={confirm} onAction={onAction} countSuffix=" all" />
       </div>
-      {confirm && <p className="text-xs" style={{ color: 'var(--accent-orange)' }}>This ends all {group.procs.length} processes of {group.name}. Click again to confirm.</p>}
+      {confirm && (
+        <p className="text-xs leading-5" style={{ color: 'var(--accent-orange)' }}>
+          This ends all {totalCount} processes of {group.name} (PIDs {pidList}). Click again to confirm.
+        </p>
+      )}
       {error && <p className="text-xs leading-5" style={{ color: 'var(--accent-red)' }}>{error}</p>}
       <div className="grid grid-cols-3 gap-3">
         <DetailRow label="CPU" value={`${group.cpu_pct.toFixed(1)}%`} />
