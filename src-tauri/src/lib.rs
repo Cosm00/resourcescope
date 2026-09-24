@@ -1,3 +1,4 @@
+mod battery;
 mod gpu;
 mod metrics;
 mod processes;
@@ -377,10 +378,14 @@ fn start_metrics_loop(
                             let _ = tray.set_title(Some(menubar_title(&mode, &snapshot)));
                         }
                         // Tooltips work on every platform (Windows trays are icon-only).
-                        let _ = tray.set_tooltip(Some(format!(
+                        let mut tooltip = format!(
                             "ResourceScope\nCPU: {:.1}%\nMemory: {:.1}%",
                             snapshot.cpu.usage_pct, snapshot.memory.usage_pct,
-                        )));
+                        );
+                        if let Some(b) = snapshot.batteries.first() {
+                            tooltip.push_str(&format!("\nBattery: {:.0}% ({})", b.charge_pct, b.state));
+                        }
+                        let _ = tray.set_tooltip(Some(tooltip));
                     }
                 }
 

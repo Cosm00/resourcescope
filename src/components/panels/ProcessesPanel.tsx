@@ -4,6 +4,7 @@ import { useMetricsStore, fmtBytes, fmtBps } from '../../store/metricsStore'
 import { usePlatformStore, processActionLabels } from '../../store/platformStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import type { ProcessDetails, ProcessInfo } from '../../types'
+import { fmtDuration } from '../../lib/format'
 
 const EMPTY_PROCESSES: ProcessInfo[] = []
 const ROW_HEIGHT = 52
@@ -57,13 +58,6 @@ function matches(p: ProcessInfo, q: string) {
     (p.user ?? '').toLowerCase().includes(q) ||
     String(p.pid).includes(q)
   )
-}
-
-function fmtDuration(secs: number) {
-  if (secs < 60) return `${secs}s`
-  if (secs < 3600) return `${Math.floor(secs / 60)}m`
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
-  return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`
 }
 
 function badgeColor(kind: string) {
