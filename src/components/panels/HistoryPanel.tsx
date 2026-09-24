@@ -95,7 +95,7 @@ export default function HistoryPanel() {
       },
       { title: 'Memory', series: [{ key: 'mem_pct', label: 'Used', color: 'var(--accent-purple)' }], format: pct, domain: [0, 100], area: true },
     ]
-    if (has('gpu_pct')) list.push({ title: 'GPU', series: [{ key: 'gpu_pct', label: 'Utilization', color: 'var(--accent-pink, #f472b6)' }], format: pct, domain: [0, 100], area: true })
+    if (has('gpu_pct')) list.push({ title: 'GPU', series: [{ key: 'gpu_pct', label: 'Utilization', color: 'var(--accent-pink)' }], format: pct, domain: [0, 100], area: true })
     list.push({
       title: 'Network',
       series: [

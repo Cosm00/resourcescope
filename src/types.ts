@@ -151,7 +151,10 @@ export interface MetricsSnapshot {
   timestamp: number
   cpu: CpuInfo
   memory: MemInfo
+  /** Primary GPU (first of `gpus`). */
   gpu: GpuInfo | null
+  /** Every GPU, most relevant first. */
+  gpus: GpuInfo[]
   /** Empty on machines without a battery. */
   batteries: BatteryInfo[]
   disks: DiskInfo[]
