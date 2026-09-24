@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
+import { usePlatformStore, processActionLabels } from '../../store/platformStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import type { ProcessInfo } from '../../types'
 
@@ -40,6 +41,7 @@ export default function ProcessesPanel() {
   const [filter, setFilter] = useState('')
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [busyAction, setBusyAction] = useState<'quit' | 'force' | null>(null)
+  const actionLabels = processActionLabels(usePlatformStore(p => p.info?.os))
   const [actionError, setActionError] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
@@ -188,21 +190,22 @@ export default function ProcessesPanel() {
                     <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selected.app_name}</div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {actionLabels.graceful && (
                     <button
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => handleTerminate(false)}
                       className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
                       style={{ background: 'rgba(251,146,60,0.10)', color: 'var(--accent-orange)', border: '1px solid rgba(251,146,60,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-                      {busyAction === 'quit' ? 'Quitting…' : 'Quit App'}
-                    </button>
+                      {busyAction === 'quit' ? actionLabels.gracefulBusy : actionLabels.graceful}
+                    </button>)}
                     <button
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => handleTerminate(true)}
                       className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
                       style={{ background: 'rgba(248,113,113,0.10)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-                      {busyAction === 'force' ? 'Force quitting…' : 'Force Quit'}
+                      {busyAction === 'force' ? actionLabels.forceBusy : actionLabels.force}
                     </button>
                   </div>
                 </div>
@@ -230,7 +233,7 @@ export default function ProcessesPanel() {
               <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
                 <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Actions</div>
                 <div className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>
-                  <strong>Quit App</strong> asks the selected process to exit normally. <strong>Force Quit</strong> kills it immediately when it is frozen, hung, or ignoring normal shutdown.
+                  {actionLabels.help}
                 </div>
               </div>
             </div>

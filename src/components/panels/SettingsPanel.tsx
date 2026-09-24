@@ -2,6 +2,7 @@ import React, { ReactNode } from 'react'
 import { useSettingsStore, type RefreshInterval, type MenubarMode } from '../../store/settingsStore'
 import { getVersion as getAppVersion } from '@tauri-apps/api/app'
 import { useState, useEffect } from 'react'
+import { usePlatformStore } from '../../store/platformStore'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -84,6 +85,10 @@ const MENUBAR_OPTIONS: { label: string; value: MenubarMode }[] = [
 
 export default function SettingsPanel() {
   const s = useSettingsStore()
+  const platform = usePlatformStore(p => p.info)
+  const trayAvailable = platform?.tray_available ?? true
+  const titleSupported = platform?.tray_title_supported ?? true
+  const trayWord = platform?.os === 'macos' ? 'menu bar' : 'tray'
   const [appVersion, setAppVersion] = useState<string>('—')
 
   useEffect(() => {
@@ -102,11 +107,8 @@ export default function SettingsPanel() {
           <Row label="Temperature Unit" description="Unit for CPU and GPU temperatures">
             <Segmented options={[{ label: '°C', value: 'C' }, { label: '°F', value: 'F' }]} value={s.temperatureUnit} onChange={s.setTemperatureUnit} />
           </Row>
-          <Row label="Bytes Format" description="How storage and memory sizes are displayed">
+          <Row label="Bytes Format" description="How storage and memory sizes are displayed" last>
             <Segmented options={[{ label: 'SI (KB/MB)', value: 'auto' }, { label: 'Binary (KiB/MiB)', value: 'binary' }]} value={s.bytesFormat} onChange={s.setBytesFormat} />
-          </Row>
-          <Row label="Compact Mode" description="Reduce padding for a denser layout" last>
-            <Toggle checked={s.compactMode} onChange={s.setCompactMode} />
           </Row>
         </Section>
 
@@ -130,17 +132,22 @@ export default function SettingsPanel() {
           </Row>
         </Section>
 
-        <Section title="Window & Menubar">
-          <Row label="Start in Tray" description="Launch hidden to system tray on startup">
-            <Toggle checked={s.startInTray} onChange={s.setStartInTray} />
+        <Section title={platform?.os === 'macos' ? 'Window & Menu Bar' : 'Window & Tray'}>
+          {!trayAvailable && (
+            <div className="px-5 py-3 text-xs" style={{ color: 'var(--accent-orange)', borderBottom: '1px solid var(--border)' }}>
+              No system tray was found on this desktop, so closing the window quits ResourceScope. On GNOME, install the AppIndicator extension to enable tray features.
+            </div>
+          )}
+          <Row label="Start in Tray" description={trayAvailable ? `Launch hidden to the ${trayWord} on startup` : 'Unavailable without a system tray'}>
+            <Toggle checked={s.startInTray && trayAvailable} onChange={v => trayAvailable && s.setStartInTray(v)} />
           </Row>
-          <Row label="Show Menubar Stats" description="Display live metrics in the tray / menubar title when supported">
+          <Row label={`Show ${trayWord === 'tray' ? 'Tray' : 'Menu Bar'} Stats`} description={titleSupported ? `Display live metrics next to the ${trayWord} icon` : 'Windows tray icons can\'t show text; live stats appear in the tray tooltip instead'}>
             <Toggle checked={s.showMenubarStats} onChange={s.setShowMenubarStats} />
           </Row>
-          <Row label="Menubar Display" description="Pick what the menu bar should show">
+          <Row label={`${trayWord === 'tray' ? 'Tray' : 'Menu Bar'} Display`} description={`Pick what the ${trayWord} should show`}>
             <Segmented options={MENUBAR_OPTIONS} value={s.menubarMode} onChange={s.setMenubarMode} />
           </Row>
-          <Row label="Menubar Refresh" description="How often the menu bar text should update" last>
+          <Row label={`${trayWord === 'tray' ? 'Tray' : 'Menu Bar'} Refresh`} description={`How often the ${trayWord} text should update`} last>
             <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)' }}>
               {REFRESH_OPTIONS.map(opt => (
                 <button key={opt.value} type="button" onClick={() => s.setMenubarRefreshInterval(opt.value)} className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"

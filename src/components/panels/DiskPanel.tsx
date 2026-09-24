@@ -1,24 +1,9 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
-import type { DiskInfo } from '../../types'
+import type { DirectoryUsage, DiskInfo, DiskScanResult, PathCrumb } from '../../types'
 
 const EMPTY_DISKS: DiskInfo[] = []
-
-type DirectoryUsage = {
-  path: string
-  name: string
-  bytes: number
-  usage_pct_of_parent: number
-  is_dir: boolean
-}
-
-type DiskScanResult = {
-  root_path: string
-  total_bytes: number
-  scanned_entries: number
-  children: DirectoryUsage[]
-}
 
 function DiskCard({ disk, onInspect }: { disk: DiskInfo; onInspect?: () => void }) {
   const pct = disk.usage_pct
@@ -107,26 +92,25 @@ function Treemap({ entries, onPick }: { entries: DirectoryUsage[]; onPick: (entr
   )
 }
 
-function Breadcrumbs({ currentPath, rootPath, onGo }: { currentPath: string; rootPath: string; onGo: (path: string) => void }) {
-  const parts = currentPath.split('/').filter(Boolean)
-  const crumbs = [rootPath]
-  let acc = rootPath === '/' ? '' : rootPath
-  for (const part of parts) {
-    const normalizedRoot = rootPath === '/' ? '' : rootPath
-    if (currentPath.startsWith(normalizedRoot)) {
-      acc = `${acc}/${part}`.replace(/\/+/g, '/')
-      crumbs.push(acc)
-    }
-  }
-  const uniq = Array.from(new Set(crumbs))
+function stripTrailingSeparator(p: string) {
+  // Keep bare roots like "/" and "C:\" intact.
+  return p.length > 1 && !/^[A-Za-z]:[\\/]$/.test(p) ? p.replace(/[\\/]+$/, '') : p
+}
+
+function Breadcrumbs({ crumbs, rootPath, onGo }: { crumbs: PathCrumb[]; rootPath: string; onGo: (path: string) => void }) {
+  // Only offer ancestors from the volume's mount point down; the backend builds
+  // crumbs with the platform's own path rules (drive letters, UNC shares, `/`).
+  const root = stripTrailingSeparator(rootPath)
+  const start = crumbs.findIndex(c => stripTrailingSeparator(c.path) === root)
+  const visible = start >= 0 ? crumbs.slice(start) : crumbs
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {uniq.map((crumb, i) => (
-        <React.Fragment key={crumb}>
-          <button type="button" onClick={() => onGo(crumb)} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            {crumb === rootPath ? rootPath : crumb.split('/').filter(Boolean).slice(-1)[0]}
+      {visible.map((crumb, i) => (
+        <React.Fragment key={crumb.path}>
+          <button type="button" onClick={() => onGo(crumb.path)} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            {i === 0 ? rootPath : crumb.name}
           </button>
-          {i < uniq.length - 1 && <span style={{ color: 'var(--text-muted)' }}>›</span>}
+          {i < visible.length - 1 && <span style={{ color: 'var(--text-muted)' }}>›</span>}
         </React.Fragment>
       ))}
     </div>
@@ -147,18 +131,21 @@ export default function DiskPanel() {
 
   const selectedDisk = useMemo(() => disks.find(d => d.mount_point === selectedMount) ?? disks[0] ?? null, [disks, selectedMount])
 
+  // Scans can take a while on big volumes; only the latest request may update state.
+  const scanSeq = useRef(0)
   const runScan = async (path: string, mountPoint?: string) => {
+    const seq = ++scanSeq.current
     if (mountPoint) setSelectedMount(mountPoint)
     setCurrentScanPath(path)
     setScanBusy(true)
     setScanError(null)
     try {
       const res = await invoke<DiskScanResult>('scan_disk_directory', { path })
-      setScanResult(res)
+      if (seq === scanSeq.current) setScanResult(res)
     } catch (err) {
-      setScanError(String(err))
+      if (seq === scanSeq.current) setScanError(String(err))
     } finally {
-      setScanBusy(false)
+      if (seq === scanSeq.current) setScanBusy(false)
     }
   }
 
@@ -220,14 +207,17 @@ export default function DiskPanel() {
 
           <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Top directories / files</div>
-            {currentScanPath && selectedDisk && <Breadcrumbs currentPath={currentScanPath} rootPath={selectedDisk.mount_point} onGo={(path) => runScan(path)} />}
+            {scanResult && selectedDisk && <Breadcrumbs crumbs={scanResult.breadcrumbs} rootPath={selectedDisk.mount_point} onGo={(path) => runScan(path)} />}
             {scanError && <div className="text-xs mb-2" style={{ color: 'var(--accent-red)' }}>{scanError}</div>}
             {!scanResult && !scanBusy && <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>Click <strong>Scan volume</strong> to inspect the selected disk and see which paths are taking up the most space.</p>}
-            {scanBusy && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Scanning current path…</p>}
+            {scanBusy && <p className="text-sm break-all" style={{ color: 'var(--text-muted)' }}>Scanning {currentScanPath ?? 'current path'}…</p>}
             {scanResult && (
               <>
                 <Treemap entries={scanResult.children} onPick={(entry) => entry.is_dir && runScan(entry.path)} />
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Scanned {scanResult.scanned_entries} top entries under {scanResult.root_path}</div>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  Scanned {scanResult.scanned_entries.toLocaleString()} entries under {scanResult.root_path} · {fmtBytes(scanResult.total_bytes)}
+                  {scanResult.truncated && <span style={{ color: 'var(--accent-orange)' }}> · stopped early on a very large tree; sizes are lower bounds</span>}
+                </div>
                 <div className="flex flex-col gap-2">
                   {scanResult.children.map(entry => (
                     <button key={entry.path} type="button" onClick={() => entry.is_dir && runScan(entry.path)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>

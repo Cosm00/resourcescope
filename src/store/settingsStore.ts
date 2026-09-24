@@ -19,7 +19,6 @@ export interface SettingsState {
   // Behavior
   refreshIntervalMs: RefreshInterval
   showMinibar: boolean           // show mini usage bar in process table
-  compactMode: boolean           // tighter density
   startInTray: boolean           // launch hidden to tray
   showMenubarStats: boolean      // show CPU / memory percentages in the menubar/tray title when supported
   menubarMode: MenubarMode       // which metrics to show in the tray/menubar title
@@ -35,7 +34,6 @@ export interface SettingsState {
   setBytesFormat: (f: 'auto' | 'binary') => void
   setRefreshInterval: (ms: RefreshInterval) => void
   setShowMinibar: (v: boolean) => void
-  setCompactMode: (v: boolean) => void
   setStartInTray: (v: boolean) => void
   setShowMenubarStats: (v: boolean) => void
   setMenubarMode: (v: MenubarMode) => void
@@ -47,6 +45,23 @@ export interface SettingsState {
 }
 
 const STORAGE_KEY = 'resourcescope-settings-v1'
+
+/** Format a Celsius reading in the user's preferred unit. */
+export function fmtTemp(celsius: number | null | undefined): string {
+  if (celsius === null || celsius === undefined || !Number.isFinite(celsius)) return '—'
+  const unit = useSettingsStore.getState().temperatureUnit
+  const value = unit === 'F' ? celsius * 9 / 5 + 32 : celsius
+  return `${value.toFixed(0)}°${unit}`
+}
+
+/** Usage level against a user-configured warning threshold. Critical sits
+ *  halfway between the threshold and 100%. */
+export function thresholdStatus(pct: number, warnAt: number): 'good' | 'warn' | 'critical' {
+  const criticalAt = warnAt + (100 - warnAt) / 2
+  if (pct >= criticalAt) return 'critical'
+  if (pct >= warnAt) return 'warn'
+  return 'good'
+}
 
 function loadPersistedState(): Partial<SettingsState> {
   try {
@@ -63,7 +78,6 @@ function persistState(state: Partial<SettingsState>) {
       bytesFormat: state.bytesFormat,
       refreshIntervalMs: state.refreshIntervalMs,
       showMinibar: state.showMinibar,
-      compactMode: state.compactMode,
       startInTray: state.startInTray,
       showMenubarStats: state.showMenubarStats,
       menubarMode: state.menubarMode,
@@ -81,7 +95,6 @@ const DEFAULTS = {
   bytesFormat: 'auto' as const,
   refreshIntervalMs: 1500 as RefreshInterval,
   showMinibar: true,
-  compactMode: false,
   startInTray: false,
   showMenubarStats: true,
   menubarMode: 'cpu_mem' as MenubarMode,
@@ -114,10 +127,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setShowMinibar: (showMinibar) => {
     set({ showMinibar })
     persistState({ ...get(), showMinibar })
-  },
-  setCompactMode: (compactMode) => {
-    set({ compactMode })
-    persistState({ ...get(), compactMode })
   },
   setStartInTray: (startInTray) => {
     set({ startInTray })
