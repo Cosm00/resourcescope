@@ -16,6 +16,7 @@ const HistoryPanel = lazy(() => import('./components/panels/HistoryPanel'))
 import { useMetricsStore } from './store/metricsStore'
 import { useSettingsStore } from './store/settingsStore'
 import { usePlatformStore } from './store/platformStore'
+import { useUpdateStore } from './store/updateStore'
 import { useShallow } from 'zustand/react/shallow'
 import type { MetricsSnapshot } from './types'
 
@@ -96,6 +97,11 @@ export default function App() {
     )
   }, [alertConfig])
 
+  const autoCheckUpdates = useSettingsStore(s => s.autoCheckUpdates)
+  useEffect(() => {
+    if (autoCheckUpdates) useUpdateStore.getState().maybeAutoCheck()
+  }, [autoCheckUpdates])
+
   const csvLogging = useSettingsStore(s => s.csvLogging)
   useEffect(() => {
     invoke('set_csv_logging', { enabled: csvLogging }).catch(err =>
@@ -108,7 +114,7 @@ export default function App() {
       <Sidebar active={activeNav} onNavigate={setActiveNav} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar />
+        <TopBar onNavigate={setActiveNav} />
 
         <div className="flex-1 flex overflow-hidden">
           {activeNav === 'overview' && <Dashboard onNavigate={setActiveNav} />}
