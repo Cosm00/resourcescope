@@ -138,8 +138,10 @@ pub struct MetricsCollector {
     /// When the previous collect ran, for turning per-refresh byte counts
     /// (process and disk I/O) into rates.
     last_collect: Option<Instant>,
-    /// Send every process instead of the busiest subset.
-    pub full_process_list: bool,
+    /// Send every process instead of the busiest subset. Shared with the
+    /// `set_full_process_list` command so toggling it never waits for the
+    /// collector lock (held for a whole collect, incl. nvidia-smi / ioreg).
+    pub full_process_list: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Cumulative (received, transmitted) byte counters per interface name.
@@ -183,15 +185,36 @@ impl MetricsCollector {
             users_refreshed_at: Instant::now(),
             prev_net: None,
             last_collect: None,
-            full_process_list: false,
+            full_process_list: Default::default(),
         }
     }
 
-    /// Refresh a single process (used before acting on it) without touching
-    /// the rest of the table, so the next tick's CPU deltas stay accurate.
+    /// Re-read a single process's identity (exe/cmd/cwd/user) and drop it if
+    /// it exited. Deliberately *not* CPU or disk usage: sampling those now would
+    /// make the next tick's delta cover only a few milliseconds and report
+    /// nonsense (e.g. 7% for a process that is really at 95%).
     pub fn refresh_process(&mut self, pid: sysinfo::Pid) {
-        self.sys
-            .refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, process_refresh_kind());
+        let identity = ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_cwd(UpdateKind::OnlyIfNotSet)
+            .with_user(UpdateKind::OnlyIfNotSet);
+        self.sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, identity);
+    }
+
+    /// True if `pid` is ResourceScope itself or one of its descendants (its
+    /// webview / GPU / network helper processes). Ending those kills the UI.
+    pub fn is_own_process_tree(&self, pid: sysinfo::Pid) -> bool {
+        let me = sysinfo::Pid::from_u32(std::process::id());
+        let mut current = Some(pid);
+        for _ in 0..64 {
+            match current {
+                Some(p) if p == me => return true,
+                Some(p) => current = self.sys.process(p).and_then(|proc| proc.parent()),
+                None => return false,
+            }
+        }
+        false
     }
 
     pub fn process_details(&mut self, pid: u32) -> Result<ProcessDetails, String> {
@@ -356,7 +379,8 @@ impl MetricsCollector {
             .map(|p| build_process_info(p, &pid_to_name, users, io_dt))
             .collect();
         let process_count = processes.len();
-        let processes_truncated = !self.full_process_list;
+        crate::processes::regroup_shared_hosts(&mut processes);
+        let processes_truncated = !self.full_process_list.load(std::sync::atomic::Ordering::Relaxed);
         if processes_truncated {
             processes = select_top_processes(processes);
         }
