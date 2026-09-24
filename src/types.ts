@@ -41,6 +41,20 @@ export interface GpuInfo {
   collection_method: string
 }
 
+export interface BatteryInfo {
+  charge_pct: number
+  state: 'charging' | 'discharging' | 'full' | 'empty' | 'unknown'
+  time_to_empty_secs: number | null
+  time_to_full_secs: number | null
+  /** Full capacity as a percentage of design capacity. */
+  health_pct: number
+  power_w: number
+  cycle_count: number | null
+  temperature_c: number | null
+  vendor: string | null
+  model: string | null
+}
+
 export interface DiskInfo {
   name: string
   mount_point: string
@@ -137,6 +151,8 @@ export interface MetricsSnapshot {
   cpu: CpuInfo
   memory: MemInfo
   gpu: GpuInfo | null
+  /** Empty on machines without a battery. */
+  batteries: BatteryInfo[]
   disks: DiskInfo[]
   networks: NetInfo[]
   /** Busiest processes, or all of them while the Processes tab is open. */
