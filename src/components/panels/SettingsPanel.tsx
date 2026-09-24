@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { usePlatformStore } from '../../store/platformStore'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -91,6 +92,26 @@ export default function SettingsPanel() {
   const trayAvailable = platform?.tray_available ?? true
   const titleSupported = platform?.tray_title_supported ?? true
   const trayWord = platform?.os === 'macos' ? 'menu bar' : 'tray'
+
+  const [notifyError, setNotifyError] = useState<string | null>(null)
+
+  const toggleAlerts = async (enabled: boolean) => {
+    setNotifyError(null)
+    if (enabled) {
+      // macOS (and some Linux desktops) require the user to allow notifications.
+      let granted = await isPermissionGranted().catch(() => false)
+      if (!granted) granted = (await requestPermission().catch(() => 'denied')) === 'granted'
+      if (!granted) {
+        setNotifyError('Notifications are blocked for ResourceScope. Allow them in your system notification settings, then try again.')
+        return
+      }
+    }
+    s.update({ alertsEnabled: enabled })
+  }
+
+  const testNotification = () => {
+    invoke('send_test_notification').catch(err => setNotifyError(`Couldn't show a notification: ${err}`))
+  }
 
   const revealLogs = async () => {
     const dir = await invoke<string | null>('set_csv_logging', { enabled: true }).catch(() => null)
@@ -180,13 +201,39 @@ export default function SettingsPanel() {
           </Row>
         </Section>
 
-        <Section title="Warning Thresholds">
-          <Row label="Health Alerts" description="Adjust at what usage % the dashboard shows warnings" last>
+        <Section title="Thresholds & Alerts">
+          <Row label="Thresholds" description="Usage at which the dashboard shows warnings (and alerts fire)">
             <div className="flex flex-col gap-4 w-64">
               <ThresholdSlider label="CPU" value={s.cpuWarnThreshold} onChange={s.setCpuWarnThreshold} color="var(--accent-blue)" />
               <ThresholdSlider label="Memory" value={s.memWarnThreshold} onChange={s.setMemWarnThreshold} color="var(--accent-purple)" />
               <ThresholdSlider label="Disk" value={s.diskWarnThreshold} onChange={s.setDiskWarnThreshold} color="var(--accent-orange)" />
             </div>
+          </Row>
+          <Row label="Desktop Notifications" description="Notify when CPU or memory stays above its threshold, a disk fills up, or the battery runs low — even while hidden in the tray">
+            <div className="flex items-center gap-3">
+              {s.alertsEnabled && (
+                <button type="button" onClick={testNotification} className="text-xs underline-offset-2 hover:underline" style={{ color: 'var(--accent-blue)' }}>
+                  Send test
+                </button>
+              )}
+              <Toggle checked={s.alertsEnabled} onChange={toggleAlerts} />
+            </div>
+          </Row>
+          {notifyError && (
+            <div className="px-5 py-2 text-xs" style={{ color: 'var(--accent-orange)', borderBottom: '1px solid var(--border)' }}>{notifyError}</div>
+          )}
+          <Row label="Alert After" description="How long CPU, memory, or temperature must stay high before notifying">
+            <Segmented
+              options={[{ label: '30s', value: '30' }, { label: '1 min', value: '60' }, { label: '5 min', value: '300' }, { label: '15 min', value: '900' }]}
+              value={String(s.alertSustainSecs)}
+              onChange={v => s.update({ alertSustainSecs: Number(v) })}
+            />
+          </Row>
+          <Row label="Low Battery" description="Warn at 20% and 10% while on battery">
+            <Toggle checked={s.alertOnLowBattery} onChange={v => s.update({ alertOnLowBattery: v })} />
+          </Row>
+          <Row label="High Temperature" description="Warn when the CPU or GPU stays at or above 90°C" last>
+            <Toggle checked={s.alertOnHighTemp} onChange={v => s.update({ alertOnHighTemp: v })} />
           </Row>
         </Section>
 
