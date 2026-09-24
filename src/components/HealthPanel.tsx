@@ -1,6 +1,8 @@
 import React from 'react'
 import { useMetricsStore } from '../store/metricsStore'
+import type { BatteryInfo } from '../types'
 import { useSettingsStore, fmtTemp, thresholdStatus } from '../store/settingsStore'
+import { batteryLevel, batteryStatusText } from '../lib/format'
 
 interface CheckItem {
   label: string
@@ -55,6 +57,11 @@ export default function HealthPanel() {
       value: fmtTemp(gpuTemp),
       status: gpuTemp > 95 ? 'critical' : gpuTemp > 85 ? 'warn' : 'good',
     } as CheckItem] : []),
+    ...(snapshot?.batteries ?? []).map((b, i, all) => ({
+      label: all.length > 1 ? `Battery ${i + 1}` : 'Battery',
+      value: `${b.charge_pct.toFixed(0)}%`,
+      status: batteryLevel(b),
+    } as CheckItem)),
     ...(snapshot?.disks ?? []).slice(0, 2).map(d => ({
       label: `Disk ${d.mount_point}`,
       value: `${d.usage_pct.toFixed(0)}%`,
@@ -92,6 +99,8 @@ export default function HealthPanel() {
         ))}
       </div>
 
+      {(snapshot?.batteries.length ?? 0) > 0 && <PowerSection batteries={snapshot!.batteries} />}
+
       {/* Uptime */}
       {snapshot && (
         <div className="mt-auto pt-2" style={{ borderTop: '1px solid var(--border)' }}>
@@ -104,3 +113,30 @@ export default function HealthPanel() {
     </div>
   )
 }
+
+function PowerSection({ batteries }: { batteries: BatteryInfo[] }) {
+  return (
+    <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+      <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Power</span>
+      {batteries.map((b, i) => {
+        const color = statusColor[batteryLevel(b)]
+        return (
+          <div key={i} className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{batteryStatusText(b)}</span>
+              <span className="text-[11px] font-mono" style={{ color }}>{b.charge_pct.toFixed(0)}%</span>
+            </div>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
+              <div style={{ width: `${b.charge_pct}%`, height: '100%', background: color, borderRadius: 9999, transition: 'width 0.8s ease' }} />
+            </div>
+            <div className="flex items-center justify-between text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span>Health {b.health_pct.toFixed(0)}%{b.cycle_count != null ? ` · ${b.cycle_count} cycles` : ''}</span>
+              {b.power_w > 0.1 && <span>{b.power_w.toFixed(1)} W</span>}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
