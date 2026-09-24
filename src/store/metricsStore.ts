@@ -15,6 +15,7 @@
 
 import { create } from 'zustand'
 import type { MetricsSnapshot } from '../types'
+import { useSettingsStore } from './settingsStore'
 
 // ─── Ring buffer ──────────────────────────────────────────────────────────────
 const HISTORY_LEN = 60 // 90s at 1.5s tick
@@ -38,17 +39,32 @@ export function ringSnapshot(ring: { buf: Float32Array; head: number }): number[
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+// Honour the "Bytes Format" setting: SI (1000, KB/MB/GB) or binary (1024,
+// KiB/MiB/GiB — what Windows Explorer and most Linux tools report).
+// Read at call time so every view picks up a change on its next render.
+const SI_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+const BINARY_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+
+function scaleBytes(b: number): [number, string] {
+  const binary = useSettingsStore.getState().bytesFormat === 'binary'
+  const base = binary ? 1024 : 1000
+  const units = binary ? BINARY_UNITS : SI_UNITS
+  let value = Math.max(0, b)
+  let i = 0
+  while (value >= base && i < units.length - 1) {
+    value /= base
+    i++
+  }
+  return [value, units[i]]
+}
+
 function fmtBytes(b: number): string {
-  if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`
-  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`
-  if (b >= 1e3) return `${(b / 1e3).toFixed(1)} KB`
-  return `${b} B`
+  const [value, unit] = scaleBytes(b)
+  return unit === 'B' ? `${Math.round(value)} B` : `${value.toFixed(1)} ${unit}`
 }
 
 function fmtBps(b: number): string {
-  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB/s`
-  if (b >= 1e3) return `${(b / 1e3).toFixed(1)} KB/s`
-  return `${b} B/s`
+  return `${fmtBytes(b)}/s`
 }
 
 // ─── Raw rings (mutable, outside React state) ─────────────────────────────────
@@ -72,8 +88,6 @@ interface MetricsState {
   memUsedGb: number
   memTotalGb: number
   gpuPct: number
-  gpuMemUsedGb: number
-  gpuMemAllocatedGb: number
   gpuTemp: number | null
   health: string
   netRecvBps: number
@@ -106,8 +120,6 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
   memUsedGb: 0,
   memTotalGb: 0,
   gpuPct: 0,
-  gpuMemUsedGb: 0,
-  gpuMemAllocatedGb: 0,
   gpuTemp: null,
   health: 'good',
   netRecvBps: 0,
@@ -143,8 +155,6 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
       memUsedGb: s.memory.used_bytes / 1e9,
       memTotalGb: s.memory.total_bytes / 1e9,
       gpuPct: s.gpu?.utilization_pct ?? 0,
-      gpuMemUsedGb: (s.gpu?.memory_used_bytes ?? 0) / 1e9,
-      gpuMemAllocatedGb: (s.gpu?.memory_allocated_bytes ?? 0) / 1e9,
       gpuTemp: s.gpu?.temperature_c ?? s.health.gpu_temp,
       health: s.health.overall,
       netRecvBps: totalRecvBps,

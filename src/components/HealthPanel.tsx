@@ -1,5 +1,6 @@
 import React from 'react'
 import { useMetricsStore } from '../store/metricsStore'
+import { useSettingsStore, fmtTemp, thresholdStatus } from '../store/settingsStore'
 
 interface CheckItem {
   label: string
@@ -23,37 +24,41 @@ export default function HealthPanel() {
   const gpu = useMetricsStore(s => s.snapshot?.gpu ?? null)
   const gpuPct = useMetricsStore(s => s.gpuPct)
   const gpuTemp = useMetricsStore(s => s.gpuTemp)
+  const cpuWarn = useSettingsStore(s => s.cpuWarnThreshold)
+  const memWarn = useSettingsStore(s => s.memWarnThreshold)
+  const diskWarn = useSettingsStore(s => s.diskWarnThreshold)
+  useSettingsStore(s => s.temperatureUnit) // re-render when the unit changes
 
   const checks: CheckItem[] = [
     {
       label: 'CPU Load',
       value: `${cpuPct.toFixed(1)}%`,
-      status: cpuPct > 90 ? 'critical' : cpuPct > 70 ? 'warn' : 'good',
+      status: thresholdStatus(cpuPct, cpuWarn),
     },
     {
       label: 'Memory',
       value: `${memPct.toFixed(1)}%`,
-      status: memPct > 90 ? 'critical' : memPct > 75 ? 'warn' : 'good',
+      status: thresholdStatus(memPct, memWarn),
     },
     ...(cpuTemp !== null ? [{
       label: 'CPU Temp',
-      value: `${cpuTemp?.toFixed(0)}°C`,
+      value: fmtTemp(cpuTemp),
       status: (cpuTemp ?? 0) > 95 ? 'critical' : (cpuTemp ?? 0) > 80 ? 'warn' : 'good',
     } as CheckItem] : []),
-    ...(gpu ? [{
+    ...(gpu?.utilization_pct != null ? [{
       label: 'GPU Load',
       value: `${gpuPct.toFixed(0)}%`,
       status: gpuPct > 95 ? 'critical' : gpuPct > 85 ? 'warn' : 'good',
     } as CheckItem] : []),
     ...(gpuTemp !== null ? [{
       label: 'GPU Temp',
-      value: `${gpuTemp.toFixed(0)}°C`,
+      value: fmtTemp(gpuTemp),
       status: gpuTemp > 95 ? 'critical' : gpuTemp > 85 ? 'warn' : 'good',
     } as CheckItem] : []),
     ...(snapshot?.disks ?? []).slice(0, 2).map(d => ({
       label: `Disk ${d.mount_point}`,
       value: `${d.usage_pct.toFixed(0)}%`,
-      status: d.usage_pct > 90 ? 'critical' : d.usage_pct > 75 ? 'warn' : 'good',
+      status: thresholdStatus(d.usage_pct, diskWarn),
     } as CheckItem)),
   ]
 
