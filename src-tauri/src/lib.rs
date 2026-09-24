@@ -1,3 +1,4 @@
+mod alerts;
 mod battery;
 mod gpu;
 mod history;
@@ -23,6 +24,7 @@ use tauri::ActivationPolicy;
 // ─── Global collector (shared across commands) ────────────────────────────────
 type CollectorState = Arc<Mutex<MetricsCollector>>;
 type HistoryState = Arc<Mutex<history::History>>;
+type AlertState = Arc<Mutex<alerts::AlertEngine>>;
 type IntervalState = Arc<AtomicU64>;
 type MenubarStatsState = Arc<AtomicBool>;
 type MenubarModeState = Arc<Mutex<String>>;
@@ -108,6 +110,29 @@ fn set_csv_logging(enabled: bool, state: tauri::State<HistoryState>) -> Option<S
         let _ = std::fs::create_dir_all(dir);
     }
     Some(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn set_alert_config(config: alerts::AlertConfig, state: tauri::State<AlertState>) {
+    lock(&state).config = config;
+}
+
+#[tauri::command]
+fn send_test_notification(app: AppHandle) -> Result<(), String> {
+    notify(&app, &alerts::Notification {
+        title: "ResourceScope alerts are on".into(),
+        body: "You'll be notified here when a threshold is crossed.".into(),
+    })
+}
+
+fn notify(app: &AppHandle, n: &alerts::Notification) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(&n.title)
+        .body(&n.body)
+        .show()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -377,15 +402,27 @@ fn menubar_title(mode: &str, snapshot: &MetricsSnapshot) -> String {
 /// Collection is blocking work (sysinfo syscalls, spawning ioreg/nvidia-smi),
 /// so it runs on its own OS thread rather than an async task where it would
 /// stall the runtime's worker threads.
-fn start_metrics_loop(
-    app: AppHandle,
-    state: CollectorState,
+/// Shared handles the background loop reads each tick.
+struct LoopShared {
+    collector: CollectorState,
     history: HistoryState,
-    interval_state: IntervalState,
-    menubar_stats_state: MenubarStatsState,
-    menubar_mode_state: MenubarModeState,
-    menubar_interval_state: MenubarIntervalState,
-) {
+    alerts: AlertState,
+    interval: IntervalState,
+    menubar_stats: MenubarStatsState,
+    menubar_mode: MenubarModeState,
+    menubar_interval: MenubarIntervalState,
+}
+
+fn start_metrics_loop(app: AppHandle, shared: LoopShared) {
+    let LoopShared {
+        collector: state,
+        history,
+        alerts,
+        interval: interval_state,
+        menubar_stats: menubar_stats_state,
+        menubar_mode: menubar_mode_state,
+        menubar_interval: menubar_interval_state,
+    } = shared;
     let spawn = std::thread::Builder::new()
         .name("resourcescope-metrics".into())
         .spawn(move || {
@@ -404,6 +441,12 @@ fn start_metrics_loop(
                     if last_history_save.elapsed() >= HISTORY_SAVE_EVERY {
                         h.save_if_dirty();
                         last_history_save = Instant::now();
+                    }
+                }
+                let fired = lock(&alerts).evaluate(&snapshot, snapshot.timestamp);
+                for n in &fired {
+                    if let Err(e) = notify(&app, n) {
+                        eprintln!("notification failed: {e}");
                     }
                 }
                 if let Err(e) = app.emit("metrics_update", &snapshot) {
@@ -464,6 +507,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(collector)
         .manage(interval_state)
         .manage(menubar_stats_state)
@@ -477,6 +521,8 @@ pub fn run() {
             get_history,
             export_history_csv,
             set_csv_logging,
+            set_alert_config,
+            send_test_notification,
             set_full_process_list,
             set_refresh_interval,
             hide_to_tray,
@@ -511,16 +557,21 @@ pub fn run() {
                 app.path().app_log_dir().ok(),
             )));
             app.manage(Arc::clone(&history));
+            let alerts: AlertState = Arc::new(Mutex::new(alerts::AlertEngine::default()));
+            app.manage(Arc::clone(&alerts));
 
             let handle = app.handle().clone();
             start_metrics_loop(
                 handle,
-                collector_for_loop,
-                history,
-                interval_for_loop,
-                menubar_stats_for_loop,
-                menubar_mode_for_loop,
-                menubar_interval_for_loop,
+                LoopShared {
+                    collector: collector_for_loop,
+                    history,
+                    alerts,
+                    interval: interval_for_loop,
+                    menubar_stats: menubar_stats_for_loop,
+                    menubar_mode: menubar_mode_for_loop,
+                    menubar_interval: menubar_interval_for_loop,
+                },
             );
             Ok(())
         })
