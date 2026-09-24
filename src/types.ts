@@ -137,6 +137,7 @@ export interface DiskScanResult {
 export interface PlatformInfo {
   os: 'macos' | 'windows' | 'linux' | string
   tray_available: boolean
+  updater_configured: boolean
   tray_title_supported: boolean
 }
 

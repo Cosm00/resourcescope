@@ -117,6 +117,9 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/apple/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # In-app updates (optional): see docs/auto-updates.md
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "ResourceScope ${{ github.ref_name }}"
@@ -133,7 +136,9 @@ jobs:
             | Linux | `.AppImage` / `.deb` |
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          # Signed updater bundles + latest.json are only produced once the
+          # signing key secret exists, so releases keep working without it.
+          args: ${{ matrix.args }} ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && '--config {"bundle":{"createUpdaterArtifacts":true}}' || '' }}
 
       - name: Staple macOS app and DMG
         if: matrix.platform == 'macos-latest'

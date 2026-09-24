@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore } from '../store/metricsStore'
 import { usePlatformStore } from '../store/platformStore'
+import { useUpdateStore } from '../store/updateStore'
 import { batteryLevel, batteryStatusText } from '../lib/format'
 
-export default function TopBar() {
+export default function TopBar({ onNavigate }: { onNavigate?: (id: string) => void }) {
   const [time, setTime] = useState(new Date())
   const snapshot = useMetricsStore(s => s.snapshot)
   const health = useMetricsStore(s => s.health)
   const trayAvailable = usePlatformStore(s => s.info?.tray_available ?? false)
   const battery = useMetricsStore(s => s.snapshot?.batteries[0] ?? null)
+  const updateAvailable = useUpdateStore(s => (s.status === 'available' ? s.latest : null))
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
@@ -63,6 +65,13 @@ export default function TopBar() {
 
       {/* Right */}
       <div className="flex items-center gap-3">
+        {updateAvailable && (
+          <button type="button" onClick={() => onNavigate?.('settings')} className="h-7 px-2.5 rounded-full text-[11px] font-semibold"
+            style={{ background: 'rgba(79,156,249,0.14)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.25)' }}
+            title="A newer version of ResourceScope is available">
+            Update {updateAvailable}
+          </button>
+        )}
         {battery && (
           <div className="flex items-center gap-1.5 text-xs tabular-nums" title={batteryStatusText(battery)}
             style={{ color: batteryLevel(battery) === 'good' ? 'var(--text-secondary)' : batteryLevel(battery) === 'warn' ? 'var(--accent-orange)' : 'var(--accent-red)' }}>

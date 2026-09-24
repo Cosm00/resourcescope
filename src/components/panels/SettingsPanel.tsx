@@ -4,7 +4,9 @@ import { getVersion as getAppVersion } from '@tauri-apps/api/app'
 import { useState, useEffect } from 'react'
 import { usePlatformStore } from '../../store/platformStore'
 import { invoke } from '@tauri-apps/api/core'
-import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart'
+import { useUpdateStore } from '../../store/updateStore'
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -94,6 +96,29 @@ export default function SettingsPanel() {
   const trayWord = platform?.os === 'macos' ? 'menu bar' : 'tray'
 
   const [notifyError, setNotifyError] = useState<string | null>(null)
+  const update = useUpdateStore()
+  const updateDescription =
+    update.status === 'up-to-date' ? 'You have the latest version'
+    : update.status === 'available' ? `Version ${update.latest} is available`
+    : update.status === 'error' ? `Update check failed: ${update.error}`
+    : 'ResourceScope'
+
+  // Launch-at-login state lives in the OS (LaunchAgent / registry / .desktop
+  // autostart entry), so read it from there rather than persisting a copy.
+  const [autostart, setAutostart] = useState(false)
+  const [autostartError, setAutostartError] = useState<string | null>(null)
+  useEffect(() => {
+    isAutostartEnabled().then(setAutostart).catch(() => setAutostart(false))
+  }, [])
+  const toggleAutostart = async (enabled: boolean) => {
+    setAutostartError(null)
+    try {
+      await (enabled ? enableAutostart() : disableAutostart())
+      setAutostart(await isAutostartEnabled())
+    } catch (err) {
+      setAutostartError(`Couldn't change login item: ${err}`)
+    }
+  }
 
   const toggleAlerts = async (enabled: boolean) => {
     setNotifyError(null)
@@ -176,6 +201,9 @@ export default function SettingsPanel() {
               No system tray was found on this desktop, so closing the window quits ResourceScope. On GNOME, install the AppIndicator extension to enable tray features.
             </div>
           )}
+          <Row label="Launch at Login" description={autostartError ?? `Start ResourceScope when you log in${trayAvailable ? `, hidden in the ${trayWord}` : ''}`}>
+            <Toggle checked={autostart} onChange={toggleAutostart} />
+          </Row>
           <Row label="Start in Tray" description={trayAvailable ? `Launch hidden to the ${trayWord} on startup` : 'Unavailable without a system tray'}>
             <Toggle checked={s.startInTray && trayAvailable} onChange={v => trayAvailable && s.setStartInTray(v)} />
           </Row>
@@ -238,8 +266,32 @@ export default function SettingsPanel() {
         </Section>
 
         <Section title="About">
-          <Row label="Version" description="ResourceScope">
-            <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>{appVersion}</span>
+          <Row label="Version" description={updateDescription}>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>{appVersion}</span>
+              {update.status === 'available' && update.canInstall && (
+                <button type="button" onClick={update.install} className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                  style={{ background: 'rgba(79,156,249,0.14)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.25)' }}>
+                  Install {update.latest} & restart
+                </button>
+              )}
+              {update.status === 'available' && !update.canInstall && update.releaseUrl && (
+                <button type="button" onClick={() => openUrl(update.releaseUrl!)} className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                  style={{ background: 'rgba(79,156,249,0.14)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.25)' }}>
+                  Download {update.latest}
+                </button>
+              )}
+              {update.status !== 'available' && (
+                <button type="button" disabled={update.status === 'checking' || update.status === 'installing'} onClick={update.check}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+                  style={{ background: 'var(--overlay-1)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                  {update.status === 'checking' ? 'Checking…' : update.status === 'installing' ? 'Installing…' : 'Check for updates'}
+                </button>
+              )}
+            </div>
+          </Row>
+          <Row label="Check Automatically" description="Look for a new version once a day">
+            <Toggle checked={s.autoCheckUpdates} onChange={v => s.update({ autoCheckUpdates: v })} />
           </Row>
           <Row label="Built with" description="Tauri · React · Rust · sysinfo">
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>🦀</span>
