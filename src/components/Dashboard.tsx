@@ -66,11 +66,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 flex gap-4 min-h-0">
-      <div className="flex-1 flex flex-col gap-4 min-w-0">
-        <div className="grid grid-cols-5 gap-3">
+      {/* Sections keep their natural height and the page scrolls; letting
+          them shrink squashed the process table under the next section. */}
+      <div className="flex-1 flex flex-col gap-4 min-w-0 *:shrink-0">
+        {/* 5 across on wide windows, 3 on medium, 2 at the 960px minimum. */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
           <ClickableCard onClick={() => onNavigate?.('cpu')}>
             <StatCard
-              title="CPU" icon={<CpuSvg />} color="#4f9cf9"
+              title="CPU" icon={<CpuSvg />} color="var(--accent-blue)"
               value={cpuPct.toFixed(1)} unit="%"
               subValue={cpuTemp !== null ? fmtTemp(cpuTemp) : undefined}
               subLabel="Temp"
@@ -81,7 +84,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </ClickableCard>
           <ClickableCard onClick={() => onNavigate?.('memory')}>
             <StatCard
-              title="Memory" icon={<MemSvg />} color="#a78bfa"
+              title="Memory" icon={<MemSvg />} color="var(--accent-purple)"
               value={memUsed.toFixed(1)} unit="GB"
               subValue={`${memTotal.toFixed(1)} GB`} subLabel="Total"
               gaugeValue={memPct}
@@ -91,7 +94,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </ClickableCard>
           <ClickableCard onClick={() => onNavigate?.('gpu')}>
             <StatCard
-              title="GPU" icon={<GpuSvg />} color="#f472b6"
+              title="GPU" icon={<GpuSvg />} color="var(--accent-pink)"
               value={gpuHasUtil ? gpuPct.toFixed(0) : '—'} unit={gpuHasUtil ? '%' : ''}
               subValue={gpuTemp !== null ? fmtTemp(gpuTemp) : gpu ? gpuMemSummary : undefined}
               subLabel={gpuTemp !== null ? 'Temp' : gpu ? (gpu.vendor === 'Apple' ? 'Unified mem' : 'VRAM') : undefined}
@@ -102,7 +105,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </ClickableCard>
           <ClickableCard onClick={() => onNavigate?.('network')}>
             <StatCard
-              title="Network ↓" icon={<NetSvg />} color="#00d4aa"
+              title="Network ↓" icon={<NetSvg />} color="var(--accent-cyan)"
               value={fmtBps(netRecv)} unit=""
               subValue={fmtBps(netSent)} subLabel="↑ Up"
               gaugeValue={null!}
@@ -112,29 +115,34 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <ClickableCard onClick={() => onNavigate?.('disk')}>
             {primaryDisk ? (
               <StatCard
-                title="Disk" icon={<DiskSvg />} color="#fb923c"
+                title="Disk" icon={<DiskSvg />} color="var(--accent-orange)"
                 value={primaryDisk.usage_pct.toFixed(0)} unit="%"
                 subValue={fmtBytes(primaryDisk.available_bytes)} subLabel="Free"
                 gaugeValue={primaryDisk.usage_pct}
                 tags={[primaryDisk.mount_point, primaryDisk.fs_type, 'Click for storage examiner']}
               />
             ) : (
-              <StatCard title="Disk" icon={<DiskSvg />} color="#fb923c" value="—" unit="" gaugeValue={0} />
+              <StatCard title="Disk" icon={<DiskSvg />} color="var(--accent-orange)" value="—" unit="" gaugeValue={0} />
             )}
           </ClickableCard>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 items-stretch" style={{ minHeight: 0, height: 190 }}>
-          <div className="col-span-2 min-h-0 h-full"><CoreGrid /></div>
-          <div className="min-h-0 h-full"><NetworkCard /></div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch lg:h-[190px]">
+          <div className="lg:col-span-2 min-h-[190px] lg:min-h-0 h-full"><CoreGrid /></div>
+          <div className="min-h-[160px] lg:min-h-0 h-full"><NetworkCard /></div>
         </div>
 
-        <div className="min-h-0 -mt-1">
+        <div>
           <ProcessTable />
+        </div>
+
+        {/* Narrow windows: health moves under the content instead of taking a column. */}
+        <div className="lg:hidden">
+          <HealthPanel />
         </div>
       </div>
 
-      <div className="w-[220px] flex-shrink-0 overflow-hidden">
+      <div className="hidden lg:block w-[220px] flex-shrink-0 overflow-hidden">
         <HealthPanel />
       </div>
     </div>

@@ -3,6 +3,7 @@ import { useMetricsStore } from '../store/metricsStore'
 import type { BatteryInfo } from '../types'
 import { useSettingsStore, fmtTemp, thresholdStatus } from '../store/settingsStore'
 import { batteryLevel, batteryStatusText } from '../lib/format'
+import { soft } from '../lib/color'
 
 interface CheckItem {
   label: string
@@ -81,7 +82,7 @@ export default function HealthPanel() {
           Health
         </span>
         <span className="text-xs font-bold px-2 py-0.5 rounded-full capitalize"
-          style={{ background: `${overallColor}20`, color: overallColor }}>
+          style={{ background: soft(overallColor), color: overallColor }}>
           {health}
         </span>
       </div>

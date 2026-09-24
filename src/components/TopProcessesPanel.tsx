@@ -50,7 +50,7 @@ function ProcessRow({ proc, mode }: { proc: ProcessInfo; mode: Mode }) {
   const pct = mode === 'cpu' ? Math.min(100, proc.cpu_pct) : 0
 
   return (
-    <div className="rounded-xl px-3 py-3 flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="rounded-xl px-3 py-3 flex items-center gap-3" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
           {proc.friendly_name ?? proc.name}
@@ -60,7 +60,7 @@ function ProcessRow({ proc, mode }: { proc: ProcessInfo; mode: Mode }) {
         </div>
       </div>
       {mode === 'cpu' && (
-        <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
           <div style={{ width: `${pct}%`, height: '100%', background: pct > 80 ? 'var(--accent-red)' : pct > 60 ? 'var(--accent-orange)' : 'var(--accent-blue)' }} />
         </div>
       )}
