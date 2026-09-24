@@ -14,7 +14,7 @@ Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend
 - **Memory** — used / available / total, swap
 - **Disk** — all mount points, usage %, filesystem type
 - **Network** — per-interface bytes in/out, computed bps rates
-- **Processes** — top 50 by CPU with memory usage
+- **Processes** — top 80 by CPU with memory usage, owner, command line, and terminate actions
 - **Temperatures** — sensor readings where the OS exposes them
 - **Health panel** — derived status badges (OK / Warning / Critical) from live data
 - **Sparklines & gauges** — smooth GPU-composited animations, ring-buffer history
@@ -71,14 +71,14 @@ Frontend (React + TypeScript + Vite)
 Rust Backend (Tauri v2 + sysinfo + tokio)
   └─ sysinfo crate: CPU, RAM, disk, network, processes, temperatures
   └─ tokio async runtime
-  └─ Background loop emits "metrics_update" every 1 500 ms
+  └─ Dedicated collector thread emits "metrics_update" every 1 500 ms (configurable)
   └─ One-shot "get_metrics" command for initial load
 ```
 
 **Performance notes:**
 - Ring buffers for history — O(1) append, no array copies
 - Two tick rates: fast scalars (1 500 ms), slow histories (every 3rd tick ≈ 4.5 s)
-- Process list capped at top 50 by CPU
+- Process list capped at top 80 by CPU
 - CSS transitions for gauge/sparkline animation — GPU composited
 
 ---
@@ -88,10 +88,10 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 - [ ] Individual drill-down panels (CPU / Memory / Disk / Network / Processes)
 - [ ] GPU metrics phase 2 — vendor-enhanced backends (NVML for NVIDIA, DXGI/ADL on Windows, richer Intel/AMD Linux collectors)
 - [ ] macOS: `powermetrics` integration for accurate per-core temps
-- [ ] Windows: DXGI / perf-counter collector to replace current placeholder backend
+- [x] Windows: DXGI / perf-counter GPU collector
 - [ ] Alert thresholds with native system notifications
-- [ ] Settings panel (refresh interval, history length, thresholds)
-- [ ] System tray with mini stats
+- [x] Settings panel (refresh interval, thresholds, units, tray behaviour)
+- [x] System tray with mini stats
 - [ ] Export / CSV logging
 
 ---
@@ -102,14 +102,13 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 ResourceScope now uses a backend-based GPU collector instead of pretending every OS exposes the same telemetry.
 
 Current state:
-- **macOS:** best support right now; uses `system_profiler` + dynamic IORegistry discovery and can optionally use an elevated `powermetrics` helper for fuller GPU telemetry
-- **Linux:** partial support via `/sys/class/drm` + `hwmon` when drivers expose data
-- **Windows:** DXGI adapter discovery is now wired for name/vendor/memory; next step is GPU Engine perf counters / vendor-enhanced collection for live utilization and thermals
+- **macOS:** uses `system_profiler` + dynamic IORegistry discovery and can optionally use an elevated `powermetrics` helper for fuller GPU telemetry
+- **Windows:** DXGI adapter discovery plus the `GPU Engine` / `GPU Adapter Memory` perf counters for live utilization and dedicated VRAM (matches Task Manager); NVIDIA cards add temperature and clock via `nvidia-smi`
+- **Linux:** `/sys/class/drm` + `hwmon` (AMD: utilization, VRAM, clock, temperature; Intel: clock, temperature); NVIDIA via `nvidia-smi` from the proprietary driver
 
 Recommended next backend layers:
-- **Windows generic:** DXGI adapter name + memory, PerfLib/PDH `GPU Engine(*)\\Utilization Percentage`
-- **Windows vendor-enhanced:** NVML (NVIDIA), ADL (AMD), Intel-specific telemetry when practical
-- **Linux vendor-enhanced:** NVML for NVIDIA, deeper AMD/Intel driver-specific collectors
+- **Windows vendor-enhanced:** temperatures for AMD/Intel (ADL / IGCL)
+- **Linux:** Intel utilization via `i915`/`xe` perf (PMU) counters
 - **macOS phase 2:** broaden Intel Mac fallback and multi-GPU discovery
 
 What this means in practice:
