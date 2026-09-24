@@ -1,20 +1,46 @@
-import React from 'react'
-import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
+import React, { useState } from 'react'
+import { useMetricsStore, fmtBytes, gpuKey } from '../../store/metricsStore'
+import type { GpuInfo } from '../../types'
 import { fmtTemp } from '../../store/settingsStore'
 import Sparkline from '../Sparkline'
 import GaugeRing from '../GaugeRing'
 
+const EMPTY_GPUS: GpuInfo[] = []
+const EMPTY_HISTORY: number[] = []
+
 export default function GpuPanel() {
-  const gpu = useMetricsStore(s => s.snapshot?.gpu ?? null)
-  const gpuPct = useMetricsStore(s => s.gpuPct)
-  const gpuTemp = useMetricsStore(s => s.gpuTemp)
-  const gpuHistory = useMetricsStore(s => s.gpuHistory)
+  const gpus = useMetricsStore(s => s.snapshot?.gpus ?? EMPTY_GPUS)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const index = Math.max(0, gpus.findIndex((g, i) => gpuKey(g, i) === selectedKey))
+  const gpu = gpus[index] ?? null
+  const key = gpu ? gpuKey(gpu, index) : ''
+  const gpuPct = gpu?.utilization_pct ?? 0
+  const gpuTemp = gpu?.temperature_c ?? null
+  const gpuHistory = useMetricsStore(s => s.gpuHistories[key] ?? EMPTY_HISTORY)
 
   const summaryTiles = gpu ? buildSummaryTiles(gpu, gpuTemp) : []
   const detailRows = gpu ? buildDetailRows(gpu) : []
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 animate-fade-slide">
+      {gpus.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap" role="tablist" aria-label="GPUs">
+          {gpus.map((g, i) => {
+            const k = gpuKey(g, i)
+            const active = i === index
+            return (
+              <button key={k} type="button" role="tab" aria-selected={active} onClick={() => setSelectedKey(k)}
+                className="px-3 py-2 rounded-xl text-xs font-medium text-left flex items-center gap-2"
+                style={{ background: active ? 'rgba(79,156,249,0.14)' : 'var(--bg-card)', border: `1px solid ${active ? 'rgba(79,156,249,0.3)' : 'var(--border)'}`, color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                <span className="truncate max-w-[220px]">{g.name}</span>
+                <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                  {g.utilization_pct != null ? `${g.utilization_pct.toFixed(0)}%` : '—'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       <div className="grid grid-cols-5 gap-3">
         <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', gridColumn: 'span 2' }}>
           <div className="flex items-center justify-between gap-4">

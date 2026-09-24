@@ -27,37 +27,43 @@ pub struct GpuInfo {
 }
 
 pub struct GpuCollector {
-    static_info: Option<GpuInfo>,
-    cached_info: Option<GpuInfo>,
+    static_infos: Vec<GpuInfo>,
+    cached: Vec<GpuInfo>,
     last_refresh: Option<Instant>,
     refresh_interval: Duration,
 }
 
 impl GpuCollector {
     pub fn new() -> Self {
-        let static_info = platform::collect_static_info().or_else(platform::unsupported_info);
+        let mut static_infos = platform::collect_static_all();
+        if static_infos.is_empty() {
+            static_infos.extend(platform::unsupported_info());
+        }
         Self {
-            cached_info: static_info.clone(),
-            static_info,
+            cached: static_infos.clone(),
+            static_infos,
             last_refresh: None,
             refresh_interval: Duration::from_secs(3),
         }
     }
 
-    pub fn collect(&mut self) -> Option<GpuInfo> {
+    /// Every GPU, most relevant first (discrete before integrated on Linux,
+    /// DXGI order — primary display adapter first — on Windows).
+    pub fn collect(&mut self) -> Vec<GpuInfo> {
         let should_refresh = self
             .last_refresh
             .map(|t| t.elapsed() >= self.refresh_interval)
             .unwrap_or(true);
 
         if should_refresh {
-            if let Some(dynamic) = platform::collect_dynamic_info(self.static_info.as_ref()) {
-                self.cached_info = Some(dynamic);
+            let dynamic = platform::collect_dynamic_all(&self.static_infos);
+            if !dynamic.is_empty() {
+                self.cached = dynamic;
             }
             self.last_refresh = Some(Instant::now());
         }
 
-        self.cached_info.clone()
+        self.cached.clone()
     }
 }
 
@@ -220,6 +226,16 @@ mod platform {
 
     pub fn unsupported_info() -> Option<GpuInfo> {
         None
+    }
+
+    // Single GPU for now: multi-GPU Intel Macs would need per-node IORegistry
+    // parsing, which can't be verified without the hardware.
+    pub fn collect_static_all() -> Vec<GpuInfo> {
+        collect_static_info().into_iter().collect()
+    }
+
+    pub fn collect_dynamic_all(base: &[GpuInfo]) -> Vec<GpuInfo> {
+        collect_dynamic_info(base.first()).into_iter().collect()
     }
 
     fn collect_system_profiler_info() -> SystemProfilerGpuInfo {
@@ -503,8 +519,38 @@ mod platform {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    pub fn collect_static_info() -> Option<GpuInfo> {
-        let card = best_gpu_card()?;
+    pub fn collect_static_all() -> Vec<GpuInfo> {
+        gpu_cards().iter().map(|c| static_for(c)).collect()
+    }
+
+    pub fn collect_dynamic_all(base: &[GpuInfo]) -> Vec<GpuInfo> {
+        let cards = gpu_cards();
+        if cards.is_empty() {
+            // No DRM node (VM/container) but nvidia-smi may still work.
+            return nvidia_only_infos();
+        }
+        let nvidia = if cards.iter().any(|c| read_trimmed(c.join("device/vendor")).as_deref() == Some("0x10de")) {
+            nvidia_smi::query_all()
+        } else {
+            Vec::new()
+        };
+        cards
+            .iter()
+            .map(|card| {
+                let idx = card_index(card);
+                let mut info = base
+                    .iter()
+                    .find(|b| b.adapter_index.is_some() && b.adapter_index == idx)
+                    .cloned()
+                    .unwrap_or_else(|| static_for(card));
+                apply_sysfs_sample(&mut info, card, &nvidia);
+                info
+            })
+            .collect()
+    }
+
+    fn static_for(card: &Path) -> GpuInfo {
+        let card = card.to_path_buf();
         let vendor_id = read_trimmed(card.join("device/vendor"));
         let vendor = vendor_from_id(vendor_id.as_deref());
         let index = card_index(&card);
@@ -525,18 +571,17 @@ mod platform {
             collection_method: format!("{} + hwmon", card.display()),
             ..Default::default()
         };
-        apply_sysfs_sample(&mut info, &card);
-        Some(info)
+        apply_sysfs_sample(&mut info, &card, &[]);
+        info
     }
 
-    pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
-        let card = best_gpu_card()?;
-        let mut info = base.cloned().or_else(collect_static_info)?;
-        apply_sysfs_sample(&mut info, &card);
-        Some(info)
+    /// PCI address of a DRM card, e.g. `0000:01:00.0`.
+    fn pci_address(card: &Path) -> Option<String> {
+        let target = fs::read_link(card.join("device")).ok()?;
+        Some(target.file_name()?.to_string_lossy().to_string())
     }
 
-    fn apply_sysfs_sample(info: &mut GpuInfo, card: &Path) {
+    fn apply_sysfs_sample(info: &mut GpuInfo, card: &Path, nvidia: &[nvidia_smi::Sample]) {
         let dev = card.join("device");
         info.utilization_pct = read_percent(dev.join("gpu_busy_percent"));
         info.temperature_c = read_hwmon_temp_c(card);
@@ -552,7 +597,13 @@ mod platform {
         // The proprietary NVIDIA driver exposes nothing useful in sysfs;
         // nvidia-smi ships with it and covers utilization, VRAM, and temps.
         if info.vendor == "NVIDIA" {
-            if let Some(sample) = nvidia_smi::query() {
+            let addr = pci_address(card);
+            let sample = nvidia
+                .iter()
+                .find(|s| super::same_pci_device(s.bus_id.as_deref(), addr.as_deref()))
+                // Single-GPU systems: no need for the bus id to line up.
+                .or_else(|| if nvidia.len() == 1 { nvidia.first() } else { None });
+            if let Some(sample) = sample {
                 sample.apply_to(info);
                 info.support_level = "full".to_string();
                 info.notes = Some("NVIDIA telemetry from nvidia-smi.".to_string());
@@ -571,20 +622,29 @@ mod platform {
         });
     }
 
+    fn nvidia_only_infos() -> Vec<GpuInfo> {
+        nvidia_smi::query_all()
+            .iter()
+            .enumerate()
+            .map(|(i, sample)| {
+                let mut info = GpuInfo {
+                    platform: "Linux".to_string(),
+                    vendor: "NVIDIA".to_string(),
+                    adapter_index: Some(i as u32),
+                    support_level: "full".to_string(),
+                    notes: Some("NVIDIA telemetry from nvidia-smi.".to_string()),
+                    ..Default::default()
+                };
+                sample.apply_to(&mut info);
+                info
+            })
+            .collect()
+    }
+
     pub fn unsupported_info() -> Option<GpuInfo> {
         // No DRM node (VMs, containers, some remote sessions) — nvidia-smi can
         // still work there, e.g. with GPU passthrough.
-        if let Some(sample) = nvidia_smi::query() {
-            let mut info = GpuInfo {
-                platform: "Linux".to_string(),
-                vendor: "NVIDIA".to_string(),
-                backend: "nvidia-smi".to_string(),
-                support_level: "full".to_string(),
-                collection_method: "nvidia-smi".to_string(),
-                notes: Some("NVIDIA telemetry from nvidia-smi.".to_string()),
-                ..Default::default()
-            };
-            sample.apply_to(&mut info);
+        if let Some(info) = nvidia_only_infos().into_iter().next() {
             return Some(info);
         }
         Some(GpuInfo {
@@ -599,11 +659,11 @@ mod platform {
         })
     }
 
-    /// Pick the most interesting GPU rather than whatever `read_dir` returns
-    /// first: hybrid laptops expose both an iGPU and a dGPU, and simpledrm /
-    /// virtual framebuffers show up as cards with no PCI vendor.
-    fn best_gpu_card() -> Option<PathBuf> {
-        let entries = fs::read_dir("/sys/class/drm").ok()?;
+    /// All GPU cards, most interesting first: discrete NVIDIA/AMD, then the
+    /// boot display adapter, then the rest. simpledrm / virtual framebuffers
+    /// (no PCI vendor) are skipped.
+    fn gpu_cards() -> Vec<PathBuf> {
+        let Ok(entries) = fs::read_dir("/sys/class/drm") else { return Vec::new() };
         let mut cards: Vec<(u8, u32, PathBuf)> = entries
             .flatten()
             .filter_map(|entry| {
@@ -628,7 +688,7 @@ mod platform {
             })
             .collect();
         cards.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        cards.into_iter().next().map(|(_, _, p)| p)
+        cards.into_iter().filter(|(rank, _, _)| *rank > 1).map(|(_, _, p)| p).collect()
     }
 
     fn read_trimmed(path: PathBuf) -> Option<String> {
@@ -687,9 +747,8 @@ mod platform {
         PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_VALID_DATA, PDH_FMT, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
     };
 
-    pub fn collect_static_info() -> Option<GpuInfo> {
-        let adapter = primary_adapter_info()?;
-        Some(GpuInfo {
+    fn static_for(adapter: &AdapterInfo) -> GpuInfo {
+        GpuInfo {
             platform: "Windows".to_string(),
             name: adapter.name.clone(),
             vendor: adapter.vendor.clone(),
@@ -700,43 +759,70 @@ mod platform {
             notes: Some("DXGI adapter discovery is live.".to_string()),
             collection_method: "DXGI adapter enumeration".to_string(),
             ..Default::default()
-        })
+        }
     }
 
-    pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
-        let adapter = primary_adapter_info()?;
-        let mut info = base.cloned().or_else(collect_static_info)?;
-        info.name = adapter.name.clone();
-        info.vendor = adapter.vendor.clone();
-        info.memory_total_bytes = Some(adapter.memory_total());
-        info.adapter_index = Some(adapter.index);
+    pub fn collect_static_all() -> Vec<GpuInfo> {
+        adapters().iter().map(static_for).collect()
+    }
 
-        // Task Manager's GPU numbers come from these counters, so ours match it.
-        let (util, dedicated_used) = perf_counter_sample(&adapter.luid_tag());
-        info.utilization_pct = util;
-        info.memory_used_bytes = dedicated_used.filter(|_| !adapter.is_integrated());
-        info.backend = "windows-dxgi-pdh".to_string();
-        info.collection_method = "DXGI + PDH \\GPU Engine(*)\\Utilization Percentage".to_string();
-        info.support_level = if util.is_some() { "full" } else { "partial" }.to_string();
-        info.notes = Some(if util.is_some() {
-            "Utilization and dedicated memory from Windows GPU perf counters (same source as Task Manager).".to_string()
-        } else {
-            "DXGI adapter discovery is active; GPU Engine perf counters were unavailable in this session (they need WDDM 2.0+ drivers).".to_string()
-        });
+    pub fn collect_dynamic_all(base: &[GpuInfo]) -> Vec<GpuInfo> {
+        let adapters = adapters();
+        let tags: Vec<String> = adapters.iter().map(|a| a.luid_tag()).collect();
+        // One PDH collection for all adapters: collecting per adapter would
+        // shrink the rate counters' sampling window to microseconds.
+        let samples = perf_counter_samples(&tags);
+        let nvidia = if adapters.iter().any(|a| a.vendor == "NVIDIA") { nvidia_smi::query_all() } else { Vec::new() };
+        let mut nvidia_used = vec![false; nvidia.len()];
 
-        if adapter.vendor == "NVIDIA" {
-            if let Some(sample) = nvidia_smi::query() {
-                let pdh_util = info.utilization_pct;
-                sample.apply_to(&mut info);
-                // Prefer PDH utilization for consistency with Task Manager.
-                info.utilization_pct = pdh_util.or(info.utilization_pct);
-                info.name = adapter.name;
-                info.support_level = "full".to_string();
-                info.backend = "windows-dxgi-pdh+nvidia-smi".to_string();
-                info.notes = Some("Utilization from Windows GPU perf counters; temperature, clock, and VRAM from nvidia-smi.".to_string());
-            }
-        }
-        Some(info)
+        adapters
+            .iter()
+            .zip(samples)
+            .map(|(adapter, (util, dedicated_used))| {
+                let mut info = base
+                    .iter()
+                    .find(|b| b.adapter_index == Some(adapter.index))
+                    .cloned()
+                    .unwrap_or_else(|| static_for(adapter));
+                info.name = adapter.name.clone();
+                info.vendor = adapter.vendor.clone();
+                info.memory_total_bytes = Some(adapter.memory_total());
+
+                // Task Manager's GPU numbers come from these counters, so ours match it.
+                info.utilization_pct = util;
+                info.memory_used_bytes = dedicated_used.filter(|_| !adapter.is_integrated());
+                info.backend = "windows-dxgi-pdh".to_string();
+                info.collection_method = "DXGI + PDH \\GPU Engine(*)\\Utilization Percentage".to_string();
+                info.support_level = if util.is_some() { "full" } else { "partial" }.to_string();
+                info.notes = Some(if util.is_some() {
+                    "Utilization and dedicated memory from Windows GPU perf counters (same source as Task Manager).".to_string()
+                } else {
+                    "DXGI adapter discovery is active; GPU Engine perf counters were unavailable in this session (they need WDDM 2.0+ drivers).".to_string()
+                });
+
+                if adapter.vendor == "NVIDIA" {
+                    // DXGI has no PCI bus id; match nvidia-smi rows by name,
+                    // then by order among the remaining NVIDIA adapters.
+                    let pick = nvidia
+                        .iter()
+                        .enumerate()
+                        .position(|(i, s)| !nvidia_used[i] && s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&adapter.name)))
+                        .or_else(|| nvidia_used.iter().position(|used| !used));
+                    if let Some(i) = pick {
+                        nvidia_used[i] = true;
+                        let pdh_util = info.utilization_pct;
+                        nvidia[i].apply_to(&mut info);
+                        // Prefer PDH utilization for consistency with Task Manager.
+                        info.utilization_pct = pdh_util.or(info.utilization_pct);
+                        info.name = adapter.name.clone();
+                        info.support_level = "full".to_string();
+                        info.backend = "windows-dxgi-pdh+nvidia-smi".to_string();
+                        info.notes = Some("Utilization from Windows GPU perf counters; temperature, clock, and VRAM from nvidia-smi.".to_string());
+                    }
+                }
+                info
+            })
+            .collect()
     }
 
     pub fn unsupported_info() -> Option<GpuInfo> {
@@ -785,9 +871,11 @@ mod platform {
         }
     }
 
-    fn primary_adapter_info() -> Option<AdapterInfo> {
+    /// Hardware adapters in DXGI order (the primary display adapter first).
+    fn adapters() -> Vec<AdapterInfo> {
+        let mut out = Vec::new();
         unsafe {
-            let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+            let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() else { return out };
             let mut index = 0;
             loop {
                 let adapter: IDXGIAdapter1 = match factory.EnumAdapters1(index) {
@@ -802,7 +890,7 @@ mod platform {
                 {
                     continue;
                 }
-                return Some(AdapterInfo {
+                out.push(AdapterInfo {
                     index: index - 1,
                     name: if name.is_empty() { "Windows GPU adapter".to_string() } else { name },
                     vendor: vendor_from_id(desc.VendorId),
@@ -812,8 +900,8 @@ mod platform {
                     luid_high: desc.AdapterLuid.HighPart,
                 });
             }
-            None
         }
+        out
     }
 
     fn utf16_trimmed(buf: &[u16]) -> String {
@@ -894,7 +982,10 @@ mod platform {
         }
     }
 
-    fn perf_counter_sample(luid_tag: &str) -> (Option<f32>, Option<u64>) {
+    /// Utilization and dedicated-memory use for each adapter tag, from one
+    /// PDH collection.
+    fn perf_counter_samples(luid_tags: &[String]) -> Vec<(Option<f32>, Option<u64>)> {
+        let empty = vec![(None, None); luid_tags.len()];
         let mut state = PDH.lock().unwrap_or_else(|p| p.into_inner());
         if matches!(*state, PdhState::Uninit) {
             *state = match open_query() {
@@ -902,25 +993,31 @@ mod platform {
                 None => PdhState::Unavailable,
             };
             // The first sample has no baseline yet.
-            return (None, None);
+            return empty;
         }
-        let PdhState::Ready(q) = &*state else { return (None, None) };
+        let PdhState::Ready(q) = &*state else { return empty };
         if unsafe { PdhCollectQueryData(q.query) } != 0 {
-            return (None, None);
+            return empty;
         }
-        let util = read_counter_array(q.engine).and_then(|items| super::aggregate_engine_utilization(&items, luid_tag));
-        let dedicated = q
-            .dedicated
-            .and_then(read_counter_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter(|(name, _)| name.to_ascii_lowercase().contains(luid_tag))
-                    .map(|(_, v)| *v as u64)
-                    .sum::<u64>()
+        let engines = read_counter_array(q.engine);
+        let dedicated = q.dedicated.and_then(read_counter_array);
+        luid_tags
+            .iter()
+            .map(|tag| {
+                let util = engines.as_ref().and_then(|items| super::aggregate_engine_utilization(items, tag));
+                let used = dedicated
+                    .as_ref()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter(|(name, _)| name.to_ascii_lowercase().contains(tag.as_str()))
+                            .map(|(_, v)| *v as u64)
+                            .sum::<u64>()
+                    })
+                    .filter(|v| *v > 0);
+                (util, used)
             })
-            .filter(|v| *v > 0);
-        (util, dedicated)
+            .collect()
     }
 
     fn vendor_from_id(id: u32) -> String {
@@ -971,6 +1068,20 @@ fn aggregate_engine_utilization(items: &[(String, f64)], luid_tag: &str) -> Opti
     Some(busiest.clamp(0.0, 100.0) as f32)
 }
 
+/// Compare PCI addresses from nvidia-smi (`00000000:01:00.0`) and sysfs
+/// (`0000:01:00.0`) by bus:device.function, ignoring the domain width.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn same_pci_device(a: Option<&str>, b: Option<&str>) -> bool {
+    let key = |s: &str| s.rsplit_once(':').map(|(head, func)| {
+        let bus = head.rsplit(':').next().unwrap_or(head);
+        format!("{}:{}", bus.to_ascii_lowercase(), func.to_ascii_lowercase())
+    });
+    match (a.and_then(key), b.and_then(key)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
 /// Parse amdgpu's `pp_dpm_sclk`, whose active level is marked with `*`:
 /// `0: 500Mhz\n1: 1200Mhz *\n2: 2400Mhz`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -996,7 +1107,7 @@ mod nvidia_smi {
     const MISSING: u8 = 2;
     static STATE: AtomicU8 = AtomicU8::new(UNKNOWN);
 
-    const QUERY: &str = "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,clocks.gr";
+    const QUERY: &str = "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,clocks.gr,pci.bus_id";
 
     pub struct Sample {
         pub name: Option<String>,
@@ -1005,6 +1116,10 @@ mod nvidia_smi {
         pub memory_total_bytes: Option<u64>,
         pub temperature_c: Option<f32>,
         pub frequency_mhz: Option<u64>,
+        /// e.g. `00000000:01:00.0`; used to match DRM cards on Linux (DXGI
+        /// has no PCI address to compare against).
+        #[cfg_attr(windows, allow(dead_code))]
+        pub bus_id: Option<String>,
     }
 
     impl Sample {
@@ -1022,14 +1137,15 @@ mod nvidia_smi {
         }
     }
 
-    pub fn query() -> Option<Sample> {
+    /// One sample per NVIDIA GPU, in nvidia-smi's order.
+    pub fn query_all() -> Vec<Sample> {
         if STATE.load(Ordering::Relaxed) == MISSING {
-            return None;
+            return Vec::new();
         }
         match run(Duration::from_secs(2)) {
             Some(out) => {
                 STATE.store(AVAILABLE, Ordering::Relaxed);
-                out.lines().find_map(parse_line)
+                out.lines().filter_map(parse_line).collect()
             }
             None => {
                 // Stop spawning a missing binary every poll; a transient failure
@@ -1037,7 +1153,7 @@ mod nvidia_smi {
                 if STATE.load(Ordering::Relaxed) == UNKNOWN {
                     STATE.store(MISSING, Ordering::Relaxed);
                 }
-                None
+                Vec::new()
             }
         }
     }
@@ -1110,6 +1226,7 @@ mod nvidia_smi {
             memory_total_bytes: mib(fields[3]),
             temperature_c: num(fields[4]).map(|v| v as f32),
             frequency_mhz: num(fields[5]).map(|v| v as u64),
+            bus_id: fields.get(6).map(|s| s.to_string()).filter(|s| !s.is_empty() && !s.starts_with('[')),
         })
     }
 }
@@ -1136,6 +1253,14 @@ mod tests {
     }
 
     #[test]
+    fn pci_addresses_match_across_domain_widths() {
+        assert!(same_pci_device(Some("00000000:01:00.0"), Some("0000:01:00.0")));
+        assert!(same_pci_device(Some("00000000:0A:00.0"), Some("0000:0a:00.0")));
+        assert!(!same_pci_device(Some("00000000:01:00.0"), Some("0000:02:00.0")));
+        assert!(!same_pci_device(None, Some("0000:01:00.0")));
+    }
+
+    #[test]
     fn amd_dpm_parsing() {
         assert_eq!(parse_amd_dpm_active_mhz("0: 500Mhz\n1: 1200Mhz *\n2: 2400Mhz\n"), Some(1200));
         assert_eq!(parse_amd_dpm_active_mhz("0: 500Mhz\n1: 1200Mhz\n"), None);
@@ -1144,7 +1269,8 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn nvidia_smi_csv_parsing() {
-        let s = nvidia_smi::parse_line("NVIDIA GeForce RTX 4070, 37, 2048, 12282, 54, 2475").unwrap();
+        let s = nvidia_smi::parse_line("NVIDIA GeForce RTX 4070, 37, 2048, 12282, 54, 2475, 00000000:01:00.0").unwrap();
+        assert_eq!(s.bus_id.as_deref(), Some("00000000:01:00.0"));
         assert_eq!(s.name.as_deref(), Some("NVIDIA GeForce RTX 4070"));
         assert_eq!(s.utilization_pct, Some(37.0));
         assert_eq!(s.memory_used_bytes, Some(2048 * 1024 * 1024));
@@ -1163,12 +1289,12 @@ mod tests {
 mod platform {
     use super::GpuInfo;
 
-    pub fn collect_static_info() -> Option<GpuInfo> {
-        None
+    pub fn collect_static_all() -> Vec<GpuInfo> {
+        Vec::new()
     }
 
-    pub fn collect_dynamic_info(_base: Option<&GpuInfo>) -> Option<GpuInfo> {
-        None
+    pub fn collect_dynamic_all(_base: &[GpuInfo]) -> Vec<GpuInfo> {
+        Vec::new()
     }
 
     pub fn unsupported_info() -> Option<GpuInfo> {
