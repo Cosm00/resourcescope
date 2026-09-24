@@ -19,6 +19,9 @@
     --text-muted: #4a5568;
     --border: #1e2840;
     --border-light: #252d3d;
+    /* Translucent layers over cards (hover rows, tracks, chips). */
+    --overlay-1: rgba(255,255,255,0.03);
+    --overlay-2: rgba(255,255,255,0.06);
   }
 
   body {

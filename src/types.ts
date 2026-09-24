@@ -50,6 +50,8 @@ export interface DiskInfo {
   available_bytes: number
   usage_pct: number
   is_removable: boolean
+  read_bps: number
+  write_bps: number
 }
 
 export interface NetInfo {
@@ -60,23 +62,38 @@ export interface NetInfo {
   sent_bps: number
 }
 
+/** Lean per-process row, sent every tick. */
 export interface ProcessInfo {
   pid: number
   name: string
   cpu_pct: number
   mem_bytes: number
+  disk_read_bps: number
+  disk_write_bps: number
   status: string
   parent_pid: number | null
   parent_name: string | null
   exe_path: string | null
-  cwd: string | null
-  cmd: string[]
   user: string | null
+  /** Display name of the app group this process belongs to. */
   app_name: string
+  /** Stable grouping key (bundle / executable path / name). */
+  group_key: string
   process_kind: string
   friendly_name: string | null
+  run_time_secs: number
+}
+
+/** Full details for one process, fetched on demand via `get_process_details`. */
+export interface ProcessDetails extends ProcessInfo {
+  cmd: string[]
+  cwd: string | null
   explanation: string | null
   bundle_hint: string | null
+  start_time: number
+  virtual_mem_bytes: number
+  disk_total_read_bytes: number
+  disk_total_written_bytes: number
 }
 
 export interface DirectoryUsage {
@@ -122,6 +139,9 @@ export interface MetricsSnapshot {
   gpu: GpuInfo | null
   disks: DiskInfo[]
   networks: NetInfo[]
+  /** Busiest processes, or all of them while the Processes tab is open. */
   processes: ProcessInfo[]
+  process_count: number
+  processes_truncated: boolean
   health: HealthInfo
 }

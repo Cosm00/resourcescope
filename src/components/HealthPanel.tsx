@@ -97,7 +97,7 @@ export default function HealthPanel() {
         <div className="mt-auto pt-2" style={{ borderTop: '1px solid var(--border)' }}>
           <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Processes</div>
           <div className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-            {snapshot.processes.length}
+            {snapshot.process_count}
           </div>
         </div>
       )}
