@@ -16,6 +16,7 @@ const HistoryPanel = lazy(() => import('./components/panels/HistoryPanel'))
 import { useMetricsStore } from './store/metricsStore'
 import { useSettingsStore } from './store/settingsStore'
 import { usePlatformStore } from './store/platformStore'
+import { useShallow } from 'zustand/react/shallow'
 import type { MetricsSnapshot } from './types'
 
 // StrictMode mounts effects twice in dev; only honour "Start in tray" once.
@@ -78,6 +79,22 @@ export default function App() {
       console.warn('[ResourceScope] Menubar refresh interval failed:', err),
     )
   }, [menubarRefreshIntervalMs])
+
+  // Alerts are evaluated in the backend so they work while hidden in the tray.
+  const alertConfig = useSettingsStore(useShallow(s => ({
+    enabled: s.alertsEnabled,
+    cpuPct: s.cpuWarnThreshold,
+    memPct: s.memWarnThreshold,
+    diskPct: s.diskWarnThreshold,
+    sustainSecs: s.alertSustainSecs,
+    lowBattery: s.alertOnLowBattery,
+    highTemp: s.alertOnHighTemp,
+  })))
+  useEffect(() => {
+    invoke('set_alert_config', { config: alertConfig }).catch(err =>
+      console.warn('[ResourceScope] Alert config failed:', err),
+    )
+  }, [alertConfig])
 
   const csvLogging = useSettingsStore(s => s.csvLogging)
   useEffect(() => {
