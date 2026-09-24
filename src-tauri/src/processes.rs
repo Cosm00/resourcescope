@@ -173,6 +173,59 @@ pub fn process_group(name: &str, exe_path: Option<&str>) -> (String, String) {
     (format!("name:{}", base.to_lowercase()), display)
 }
 
+/// Executables that host many unrelated apps. Grouping them by path would
+/// merge e.g. every WebView2 app (Teams, Widgets, ResourceScope's own UI) or
+/// every Python script into one "app", and "End all" would kill them together.
+const SHARED_HOSTS: &[&str] = &[
+    "msedgewebview2", "webkitwebprocess", "webkitnetworkprocess", "webkitgpuprocess",
+    "com.apple.webkit.webcontent", "com.apple.webkit.networking", "com.apple.webkit.gpu",
+    "python", "python3", "pythonw", "node", "java", "javaw", "dotnet", "ruby", "perl",
+    "php", "deno", "bun", "wscript", "cscript", "powershell", "pwsh", "conhost",
+];
+
+fn is_shared_host(exe: &str) -> bool {
+    let file = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    let stem = strip_exe_suffix(file).to_ascii_lowercase();
+    // python3.12, node18, …
+    let base = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    SHARED_HOSTS.contains(&stem.as_str()) || SHARED_HOSTS.contains(&base)
+}
+
+/// Re-key shared-host processes by the app that launched them: walk up
+/// through ancestors running the same executable (WebView2's browser →
+/// renderer tree) and group under that chain's parent, e.g. "msedgewebview2 ·
+/// Teams". Processes whose owner can't be found keep their own group.
+pub fn regroup_shared_hosts(procs: &mut [ProcessInfo]) {
+    let index: HashMap<u32, usize> = procs.iter().enumerate().map(|(i, p)| (p.pid, i)).collect();
+    let mut updates = Vec::new();
+    for (i, p) in procs.iter().enumerate() {
+        let Some(exe) = p.exe_path.as_deref().filter(|e| is_shared_host(e)) else { continue };
+        let mut root = i;
+        for _ in 0..32 {
+            let parent = procs[root].parent_pid.and_then(|pp| index.get(&pp)).copied();
+            match parent {
+                Some(pi) if procs[pi].exe_path.as_deref() == Some(exe) => root = pi,
+                _ => break,
+            }
+        }
+        let Some(owner_pid) = procs[root].parent_pid else { continue };
+        let owner_name = index
+            .get(&owner_pid)
+            .map(|&oi| procs[oi].app_name.clone())
+            .or_else(|| procs[root].parent_name.clone());
+        let host = strip_exe_suffix(exe.rsplit(['/', '\\']).next().unwrap_or(exe)).to_string();
+        let display = match owner_name {
+            Some(owner) => format!("{host} · {owner}"),
+            None => host,
+        };
+        updates.push((i, format!("shared:{}:{owner_pid}", exe.to_lowercase()), display));
+    }
+    for (i, key, display) in updates {
+        procs[i].group_key = key;
+        procs[i].app_name = display;
+    }
+}
+
 fn strip_exe_suffix(file: &str) -> &str {
     if file.len() > 4 && file[file.len() - 4..].eq_ignore_ascii_case(".exe") {
         &file[..file.len() - 4]
@@ -366,6 +419,36 @@ mod tests {
             friendly_name: None,
             run_time_secs: 0,
         }
+    }
+
+    #[test]
+    fn shared_hosts_group_by_owning_app() {
+        let with = |pid: u32, parent: Option<u32>, name: &str, exe: &str| {
+            let mut p = fake(pid, 0.0, 0, 0);
+            p.name = name.into();
+            p.parent_pid = parent;
+            p.exe_path = Some(exe.into());
+            let (key, app) = process_group(name, Some(exe));
+            p.group_key = key;
+            p.app_name = app;
+            p
+        };
+        let wv = "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\msedgewebview2.exe";
+        let mut procs = vec![
+            with(10, None, "ms-teams.exe", "C:\\Apps\\ms-teams.exe"),
+            with(11, Some(10), "msedgewebview2.exe", wv), // browser process
+            with(12, Some(11), "msedgewebview2.exe", wv), // renderer
+            with(20, None, "resourcescope.exe", "C:\\Apps\\resourcescope.exe"),
+            with(21, Some(20), "msedgewebview2.exe", wv),
+            with(30, None, "python3", "/usr/bin/python3"), // orphan: keeps exe group
+        ];
+        regroup_shared_hosts(&mut procs);
+        assert_eq!(procs[1].group_key, procs[2].group_key);
+        assert_ne!(procs[1].group_key, procs[4].group_key, "Teams and ResourceScope webviews must not merge");
+        assert_eq!(procs[2].app_name, "msedgewebview2 · ms-teams");
+        assert!(procs[5].group_key.starts_with("exe:"));
+        assert!(is_shared_host("/usr/bin/python3.12"));
+        assert!(!is_shared_host("/usr/bin/firefox"));
     }
 
     #[test]

@@ -104,7 +104,9 @@ export default function ProcessTable() {
   }, [processes, sortKey, sortDir])
 
   const selected = useMemo(
-    () => sorted.find(p => p.pid === selectedPid) ?? sorted[0] ?? null,
+    // Only an explicit selection: defaulting to the top row meant a click on
+    // Kill could land on whatever process happened to be busiest that tick.
+    () => sorted.find(p => p.pid === selectedPid) ?? null,
     [sorted, selectedPid]
   )
 

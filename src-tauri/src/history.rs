@@ -54,13 +54,15 @@ impl Sample {
         let net_tx: u64 = s.networks.iter().map(|n| n.sent_bps).sum();
         let disk_r: u64 = s.disks.iter().map(|d| d.read_bps).sum();
         let disk_w: u64 = s.disks.iter().map(|d| d.write_bps).sum();
+        // Busiest GPU, matching the health badge and alerts.
+        let gpu = s.gpus.iter().filter_map(|g| g.utilization_pct).reduce(f32::max);
         Self {
             ts: s.timestamp,
             values: [
                 s.cpu.usage_pct,
                 s.cpu.usage_pct,
                 s.memory.usage_pct,
-                opt(s.gpu.as_ref().and_then(|g| g.utilization_pct)),
+                opt(gpu),
                 net_rx as f32,
                 net_tx as f32,
                 disk_r as f32,
@@ -134,8 +136,14 @@ impl Tier {
         let mut closed = None;
         match &mut self.current {
             Some(acc) if acc.bucket_start == start => acc.add(s),
-            // Clock went backwards (NTP step, manual change): start over.
+            // Clock went backwards (NTP step, manual change, or correcting an
+            // earlier jump into the future): anything stamped at or after the
+            // new time is now "in the future", so drop it to keep the series
+            // ordered, then start over from here.
             Some(acc) if start < acc.bucket_start => {
+                while self.points.back().is_some_and(|p| p.ts >= start) {
+                    self.points.pop_back();
+                }
                 *acc = Accumulator::new(start);
                 acc.add(s);
             }
@@ -148,6 +156,13 @@ impl Tier {
                     }
                 }
                 let mut acc = Accumulator::new(start);
+                // A partial bucket saved before a restart is resumed rather
+                // than duplicated under the same timestamp.
+                if self.points.back().is_some_and(|p| p.ts == start) {
+                    if let Some(partial) = self.points.pop_back() {
+                        acc.add(&partial);
+                    }
+                }
                 acc.add(s);
                 self.current = Some(acc);
             }
@@ -305,6 +320,9 @@ impl History {
                 }
             }
             w.flush()?;
+            // Make sure the bytes are on disk before the rename replaces the
+            // old file, or a power loss can leave an empty history.
+            w.get_ref().sync_all()?;
         }
         fs::rename(&tmp, path)
     }
@@ -466,6 +484,44 @@ mod tests {
         assert_eq!(pts[0].gpu_pct, None);
         // In-progress bucket is included.
         assert_eq!(pts.last().unwrap().cpu_pct, Some(50.0));
+    }
+
+    #[test]
+    fn clock_going_backwards_keeps_series_ordered() {
+        let mut h = History::new(None, None);
+        let base = 1_700_000_000_000u64 - 1_700_000_000_000 % FINE_BUCKET_MS;
+        for i in 0..10 {
+            h.ingest_sample(sample(base + i * FINE_BUCKET_MS, 10.0));
+        }
+        // Clock steps back 45s.
+        let back = base + 10 * FINE_BUCKET_MS - 45_000;
+        for i in 0..3 {
+            h.ingest_sample(sample(back + i * FINE_BUCKET_MS, 20.0));
+        }
+        let pts = h.export_samples(3_600_000, back + 3 * FINE_BUCKET_MS);
+        assert!(pts.windows(2).all(|w| w[0].ts < w[1].ts), "not strictly increasing: {:?}", pts.iter().map(|p| p.ts).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn restart_resumes_partial_bucket_instead_of_duplicating() {
+        let dir = std::env::temp_dir().join(format!("resourcescope-hist-resume-{}", std::process::id()));
+        let path = dir.join("history.bin");
+        let now = crate::metrics::now_ms();
+        let start = now - now % FINE_BUCKET_MS;
+        {
+            let mut h = History::new(Some(path.clone()), None);
+            h.ingest_sample(sample(start - FINE_BUCKET_MS, 10.0));
+            h.ingest_sample(sample(start, 10.0)); // partial bucket
+            h.save_if_dirty();
+        }
+        let mut h = History::new(Some(path.clone()), None);
+        h.ingest_sample(sample(start + 1, 30.0)); // same bucket after restart
+        h.ingest_sample(sample(start + FINE_BUCKET_MS, 5.0)); // closes it
+        fs::remove_dir_all(&dir).ok();
+        let pts = h.export_samples(3_600_000, start + FINE_BUCKET_MS);
+        let same: Vec<_> = pts.iter().filter(|p| p.ts == start).collect();
+        assert_eq!(same.len(), 1, "duplicate bucket after restart");
+        assert!((same[0].values[0] - 20.0).abs() < 0.01, "partial and resumed samples should average");
     }
 
     #[test]

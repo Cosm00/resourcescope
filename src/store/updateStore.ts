@@ -56,7 +56,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           if (update) {
             set({ status: 'available', current, latest: update.version, notes: update.body ?? null, canInstall: true, releaseUrl: null })
           } else {
-            set({ status: 'up-to-date', current, latest: current })
+            set({ status: 'up-to-date', current, latest: current, notes: null, releaseUrl: null, canInstall: false })
           }
           return
         } catch (err) {
@@ -68,7 +68,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
       const res = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } })
       if (res.status === 404) {
-        set({ status: 'up-to-date', current, latest: current })
+        set({ status: 'up-to-date', current, latest: current, notes: null, releaseUrl: null, canInstall: false })
         return
       }
       if (!res.ok) throw new Error(`GitHub responded ${res.status}`)
