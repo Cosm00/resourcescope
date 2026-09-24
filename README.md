@@ -12,12 +12,16 @@ Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend
 
 - **Live CPU** — overall load, per-core breakdown, frequency, model name, load average
 - **Memory** — used / available / total, swap
-- **Disk** — all mount points, usage %, filesystem type
-- **Network** — per-interface bytes in/out, computed bps rates
-- **Processes** — top 80 by CPU with memory usage, owner, command line, and terminate actions
-- **Temperatures** — sensor readings where the OS exposes them
-- **Health panel** — derived status badges (OK / Warning / Critical) from live data
-- **Sparklines & gauges** — smooth GPU-composited animations, ring-buffer history
+- **GPU** — every GPU in the system: utilization, VRAM, temperature and clock where the OS or vendor tools expose them (macOS IORegistry/powermetrics, Windows perf counters, Linux sysfs, `nvidia-smi`)
+- **Disk** — volumes with usage, live read/write rates, and a storage examiner that finds what's using space
+- **Network** — per-interface rates and totals
+- **Processes** — every process, grouped by app (Chrome, Electron, …) or flat; CPU, memory, disk I/O, owner, command line; end a process or a whole app
+- **Battery** — charge, time remaining, health, cycle count and power draw on laptops
+- **History** — 30 days of metrics (10-second detail for 24 hours) with charts, a table view and CSV export; optional continuous CSV logging
+- **Alerts** — desktop notifications when CPU/memory stay high, a disk fills up, a CPU/GPU runs hot, or the battery runs low (works while hidden in the tray)
+- **Tray / menu bar** — live stats, hide-to-tray, launch at login (starts hidden)
+- **Light & dark themes** — System / Dark / Light
+- **Updates** — checks GitHub for new versions; one-click install once signing is set up ([docs/auto-updates.md](docs/auto-updates.md))
 
 ---
 
@@ -26,11 +30,12 @@ Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend
 | Layer | Tech |
 |-------|------|
 | Frontend | React 19 + TypeScript + Vite 7 |
-| Styling | Tailwind CSS v4 (dark theme) |
+| Styling | Tailwind CSS v4 (dark + light themes via CSS tokens) |
 | State | Zustand with selector subscriptions |
 | Backend | Rust via Tauri v2 |
 | Metrics | [`sysinfo`](https://github.com/GuillaumeGomez/sysinfo) crate |
-| Runtime | Tokio async, 1 500 ms poll loop |
+| Charts | Recharts (History tab, lazy-loaded) |
+| Tests | `cargo test` + Vitest, run in CI on macOS, Windows and Linux |
 
 ---
 
@@ -85,14 +90,16 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 
 ## Roadmap
 
-- [ ] Individual drill-down panels (CPU / Memory / Disk / Network / Processes)
-- [ ] GPU metrics phase 2 — vendor-enhanced backends (NVML for NVIDIA, DXGI/ADL on Windows, richer Intel/AMD Linux collectors)
-- [ ] macOS: `powermetrics` integration for accurate per-core temps
+- [x] Individual drill-down panels (CPU / Memory / GPU / Disk / Network / Processes / History)
 - [x] Windows: DXGI / perf-counter GPU collector
-- [ ] Alert thresholds with native system notifications
-- [x] Settings panel (refresh interval, thresholds, units, tray behaviour)
-- [x] System tray with mini stats
-- [ ] Export / CSV logging
+- [x] NVIDIA telemetry via `nvidia-smi` (Linux + Windows); multi-GPU
+- [x] Alert thresholds with native system notifications
+- [x] Settings panel (refresh interval, thresholds, units, theme, tray behaviour)
+- [x] System tray with mini stats; launch at login
+- [x] History, export / CSV logging
+- [ ] GPU: AMD/Intel temperatures on Windows (ADL / IGCL), Intel utilization on Linux (i915/xe PMU)
+- [ ] macOS: multi-GPU (Intel Macs) and `powermetrics` per-core temps
+- [ ] Per-process network usage
 
 ---
 
