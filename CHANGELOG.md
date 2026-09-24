@@ -8,6 +8,15 @@
 - "Start in Tray", "Bytes Format" (SI vs. binary) and warning-threshold settings are now actually applied.
 - Platform-aware UI: tray vs. menu bar wording, Windows "End Task" / Linux "Terminate · Kill" / macOS "Quit · Force Quit" process actions, and hiding Apple-only GPU fields elsewhere.
 - Rust unit tests plus a cross-platform collector smoke test, run in CI on macOS, Windows and Linux.
+- **All processes, grouped by app.** The Processes tab lists every process (virtualized), groups helpers under their app (bundle / executable), shows per-process disk I/O and run time, loads command line and working directory on demand, and can end a whole app with a confirming second click. Other views still receive only the busiest processes to keep each tick light.
+- **Disk activity:** live read/write rates per volume and per process, with a Disk tab activity card.
+- **Battery:** charge, time remaining, health, cycles and power draw (top bar, Health panel, tray tooltip).
+- **History tab:** 30 days of metrics (10-second buckets for 24 h, 5-minute beyond) persisted across restarts; 1h–30d charts with a table view; CSV export through a native save dialog; optional continuous daily CSV logging.
+- **Desktop alerts** for sustained high CPU/memory, full disks, hot CPU/GPU and low battery, evaluated in the backend so they fire while hidden in the tray.
+- **Launch at login** (starts hidden in the tray) and **update checks** with an "Update available" pill; one-click signed updates once a key is configured (docs/auto-updates.md).
+- **Multi-GPU:** every GPU is listed with a picker in the GPU tab; NVIDIA cards are matched to `nvidia-smi` by PCI bus id on Linux.
+- **Light theme** (System / Dark / Light) and a responsive overview down to the 960 px minimum window width.
+- ESLint and Vitest, run in CI alongside the Rust tests.
 
 ### Fixed
 - Command line, working directory and user were empty for every process started after launch (sysinfo only loaded them once).
@@ -25,10 +34,19 @@
 - Closing the window on a desktop without a system tray no longer leaves the app running invisibly.
 - Changing a setting no longer tears down the live metrics subscription.
 - macOS GPU helper no longer spawns a login shell on every poll.
+- Linux listed every userland thread as a process, double-counting its parent's CPU and memory.
+- The Network tab's sparklines flat-lined above ~130 KB/s (fixed scale).
+- GPU gauge and sparkline had no colour (`--accent-pink` was never defined).
+- Health and Disk badges had no background (hex alpha appended to a CSS variable).
+- Dark theme muted text contrast raised from 2.3:1 to 3.7:1.
 
 ### Security
 - Enabled a Content Security Policy for the webview.
 - `terminate_process` refuses to kill ResourceScope itself.
+
+### Changed
+- CI and releases use Node 22 (Node 20 is end-of-life).
+- `@tauri-apps/api` is pinned to the same minor as the Rust `tauri` crate (the CLI refuses mismatches).
 
 ### Removed
 - Unused legacy view components and the no-op "Compact Mode" setting.
