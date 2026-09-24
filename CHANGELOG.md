@@ -1,3 +1,38 @@
+## [Unreleased]
+
+### Added
+- **NVIDIA GPU telemetry on Linux and Windows** via `nvidia-smi` (utilization, VRAM, temperature, clock), with a 2 s timeout and no console-window flash on Windows.
+- **Windows GPU utilization and dedicated VRAM** from the `GPU Engine` / `GPU Adapter Memory` perf counters (the same source Task Manager uses), matched to the selected adapter by LUID.
+- Linux GPU: AMD VRAM usage, AMD/Intel clock speed, and smarter card selection on hybrid (iGPU + dGPU) systems.
+- `frequency_mhz` GPU field (macOS powermetrics frequency no longer overloads `power_state`).
+- "Start in Tray", "Bytes Format" (SI vs. binary) and warning-threshold settings are now actually applied.
+- Platform-aware UI: tray vs. menu bar wording, Windows "End Task" / Linux "Terminate · Kill" / macOS "Quit · Force Quit" process actions, and hiding Apple-only GPU fields elsewhere.
+- Rust unit tests plus a cross-platform collector smoke test, run in CI on macOS, Windows and Linux.
+
+### Fixed
+- Command line, working directory and user were empty for every process started after launch (sysinfo only loaded them once).
+- Process owner now shows the user name instead of `Uid(501)` / raw SIDs.
+- Network rates could be attributed to the wrong interface when adapters appeared or disappeared (VPN, Wi-Fi toggle); rates are now keyed by name using a monotonic clock.
+- Windows loopback adapter is filtered; interfaces like `lowpan0` are no longer hidden by the `lo` prefix check.
+- Disk list hides pseudo filesystems (tmpfs, overlay, snap squashfs, APFS system volumes), picks up hot-plugged drives, and lists the system volume first so the dashboard, health checks and tray agree on the "primary" disk.
+- Disk scanner counted only three directory levels deep; it now walks the full tree (without following symlinks or crossing devices) under an entry/time budget, and returns proper errors.
+- Disk breadcrumbs broke on Windows paths (and duplicated segments for non-root mounts); they are now built natively.
+- Disk scans and the initial metrics request ran on the main thread and froze the UI; they now run on a background pool.
+- The metrics loop ran blocking collection inside the async runtime; it now has its own thread and a steady cadence.
+- Tray title refresh used the startup interval instead of the current one.
+- CPU temperature detection now recognises AMD (`Tctl`/`Tdie`), ARM SoC and ACPI sensors and prefers package readings.
+- Windows GPU memory total reported shared system memory (often 2x too large) for discrete cards.
+- Closing the window on a desktop without a system tray no longer leaves the app running invisibly.
+- Changing a setting no longer tears down the live metrics subscription.
+- macOS GPU helper no longer spawns a login shell on every poll.
+
+### Security
+- Enabled a Content Security Policy for the webview.
+- `terminate_process` refuses to kill ResourceScope itself.
+
+### Removed
+- Unused legacy view components and the no-op "Compact Mode" setting.
+
 ## [1.1.3] - 2026-04-20
 
 ### Fixed

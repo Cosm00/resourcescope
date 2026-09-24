@@ -59,3 +59,7 @@ jobs:
       - name: Check Rust
         working-directory: src-tauri
         run: cargo check --all-targets
+
+      - name: Test Rust
+        working-directory: src-tauri
+        run: cargo test
