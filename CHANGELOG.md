@@ -1,4 +1,4 @@
-## [Unreleased]
+## [1.2.0] - 2026-09-24
 
 ### Added
 - **NVIDIA GPU telemetry on Linux and Windows** via `nvidia-smi` (utilization, VRAM, temperature, clock), with a 2 s timeout and no console-window flash on Windows.
