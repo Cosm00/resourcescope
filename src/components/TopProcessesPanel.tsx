@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react'
-import { useMetricsStore, fmtBytes, fmtBps } from '../store/metricsStore'
+import { useMetricsStore, fmtBytes } from '../store/metricsStore'
 import type { ProcessInfo } from '../types'
 
 type Mode = 'cpu' | 'memory'

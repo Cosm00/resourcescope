@@ -108,7 +108,7 @@ export default function GpuPanel() {
   )
 }
 
-function buildSummaryTiles(gpu: any, gpuTemp: number | null) {
+function buildSummaryTiles(gpu: GpuInfo, gpuTemp: number | null) {
   return [
     {
       label: 'Temperature',
@@ -128,7 +128,7 @@ function buildSummaryTiles(gpu: any, gpuTemp: number | null) {
   ]
 }
 
-function buildDetailRows(gpu: any) {
+function buildDetailRows(gpu: GpuInfo) {
   const rows = [
     { label: 'Telemetry Source', value: prettyBackend(gpu.backend) },
     { label: 'Collection Method', value: gpu.collection_method },
@@ -143,7 +143,7 @@ function buildDetailRows(gpu: any) {
   return rows.filter(row => !('appleOnly' in row) || gpu.platform === 'macOS')
 }
 
-function usageSubtitle(gpu: any) {
+function usageSubtitle(gpu: GpuInfo) {
   if (!gpu) return 'No GPU telemetry backend is active right now.'
   if (gpu.utilization_pct !== null) {
     return `${prettyBackend(gpu.backend)} is reporting live GPU utilization right now.`
@@ -161,7 +161,7 @@ function prettyBackend(backend: string) {
   return backend.replace(/[-_]/g, ' ')
 }
 
-function summarizeMemory(gpu: any) {
+function summarizeMemory(gpu: GpuInfo) {
   const used = gpu.memory_used_bytes ?? gpu.memory_allocated_bytes
   const total = gpu.memory_total_bytes ?? gpu.memory_allocated_bytes
   if (used != null && total != null) return `${fmtBytes(used)} / ${fmtBytes(total)}`

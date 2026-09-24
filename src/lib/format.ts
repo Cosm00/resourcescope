@@ -32,3 +32,14 @@ export function batteryLevel(b: BatteryInfo): 'good' | 'warn' | 'critical' {
   if (b.charge_pct <= 20) return 'warn'
   return 'good'
 }
+
+/** Short axis labels for byte rates: 950, 4.5K, 270M, 1.2G. */
+export function shortRate(v: number): string {
+  const units = ['', 'K', 'M', 'G', 'T']
+  let i = 0
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000
+    i++
+  }
+  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)}${units[i]}`
+}

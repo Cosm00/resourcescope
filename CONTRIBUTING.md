@@ -12,7 +12,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 2. **Install prerequisites**
    - [Rust](https://rustup.rs/) (stable toolchain)
-   - [Node.js](https://nodejs.org/) 18+
+   - [Node.js](https://nodejs.org/) 22.12+
    - OS-specific Tauri prerequisites → [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/)
 
 3. **Install Node dependencies**
@@ -52,7 +52,9 @@ resourcescope/
 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes with focused, atomic commits.
-3. Make sure `npm run build` and `cargo build` both pass.
+3. Make sure these pass (CI runs them on macOS, Windows, and Linux):
+   - `npm run lint`, `npm test`, `npm run build`
+   - `cargo test` and `cargo clippy --all-targets` in `src-tauri/`
 4. Open a PR with a clear description of what you changed and why.
 
 ## Reporting Bugs
