@@ -32,7 +32,6 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const cpuTemp   = useMetricsStore(s => s.cpuTemp)
   const cpuCores  = useMetricsStore(s => s.snapshot?.cpu.core_count ?? 0)
   const gpuCount  = useMetricsStore(s => s.snapshot?.gpus.length ?? 0)
-  const cpuModel  = useMetricsStore(s => s.snapshot?.cpu.model ?? '')
   const cpuFreq   = useMetricsStore(s => s.snapshot?.cpu.frequency_mhz ?? 0)
 
   const memPct    = useMetricsStore(s => s.memPct)
