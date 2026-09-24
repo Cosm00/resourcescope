@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::battery::{BatteryCollector, BatteryInfo};
 use crate::gpu::{GpuCollector, GpuInfo};
 use crate::processes::{build_process_details, build_process_info, select_top_processes, ProcessDetails, ProcessInfo};
 
@@ -17,6 +18,8 @@ pub struct MetricsSnapshot {
     pub cpu: CpuInfo,
     pub memory: MemInfo,
     pub gpu: Option<GpuInfo>,
+    /// Empty on machines without a battery.
+    pub batteries: Vec<BatteryInfo>,
     pub disks: Vec<DiskInfo>,
     pub networks: Vec<NetInfo>,
     pub processes: Vec<ProcessInfo>,
@@ -115,6 +118,7 @@ pub struct MetricsCollector {
     pub networks: Networks,
     pub components: Components,
     pub gpu: GpuCollector,
+    battery: BatteryCollector,
     users: Users,
     users_refreshed_at: Instant,
     // Keyed by interface name: sysinfo's iteration order is not guaranteed to
@@ -163,6 +167,7 @@ impl MetricsCollector {
             networks,
             components,
             gpu,
+            battery: BatteryCollector::new(),
             users,
             users_refreshed_at: Instant::now(),
             prev_net: None,
@@ -382,6 +387,7 @@ impl MetricsCollector {
                 swap_used_bytes,
             },
             gpu,
+            batteries: self.battery.collect(),
             disks,
             networks: networks_info,
             processes,

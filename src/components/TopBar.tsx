@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore } from '../store/metricsStore'
 import { usePlatformStore } from '../store/platformStore'
+import { batteryLevel, batteryStatusText } from '../lib/format'
 
 export default function TopBar() {
   const [time, setTime] = useState(new Date())
   const snapshot = useMetricsStore(s => s.snapshot)
   const health = useMetricsStore(s => s.health)
   const trayAvailable = usePlatformStore(s => s.info?.tray_available ?? false)
+  const battery = useMetricsStore(s => s.snapshot?.batteries[0] ?? null)
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
@@ -61,6 +63,13 @@ export default function TopBar() {
 
       {/* Right */}
       <div className="flex items-center gap-3">
+        {battery && (
+          <div className="flex items-center gap-1.5 text-xs tabular-nums" title={batteryStatusText(battery)}
+            style={{ color: batteryLevel(battery) === 'good' ? 'var(--text-secondary)' : batteryLevel(battery) === 'warn' ? 'var(--accent-orange)' : 'var(--accent-red)' }}>
+            <BatteryGlyph pct={battery.charge_pct} charging={battery.state === 'charging'} />
+            {battery.charge_pct.toFixed(0)}%
+          </div>
+        )}
         {trayAvailable && <button
           type="button"
           onClick={hideToTray}
@@ -87,3 +96,16 @@ export default function TopBar() {
     </header>
   )
 }
+
+function BatteryGlyph({ pct, charging }: { pct: number; charging: boolean }) {
+  const w = Math.max(1, Math.round((pct / 100) * 14))
+  return (
+    <svg width="22" height="12" viewBox="0 0 22 12" fill="none" aria-hidden>
+      <rect x="0.5" y="0.5" width="18" height="11" rx="2.5" stroke="currentColor" opacity="0.7" />
+      <rect x="19.5" y="3.5" width="2" height="5" rx="1" fill="currentColor" opacity="0.7" />
+      <rect x="2.5" y="2.5" width={w} height="7" rx="1.2" fill="currentColor" />
+      {charging && <path d="M10 2 L7 6.5 H9.5 L8.5 10 L12 5.5 H9.5 Z" fill="var(--bg-secondary)" />}
+    </svg>
+  )
+}
+
