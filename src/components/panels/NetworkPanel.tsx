@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react'
 import { useMetricsStore, fmtBytes, fmtBps } from '../../store/metricsStore'
 import type { NetInfo } from '../../types'
+import Sparkline from '../Sparkline'
 
 const EMPTY_NETS: NetInfo[] = []
 
@@ -132,18 +133,10 @@ function InsightCard({ title, name, primary, secondary, accent }: { title: strin
 }
 
 function SparklineBlock({ data, color }: { data: number[]; color: string }) {
+  // Auto-scaled: the previous fixed scale flat-lined above ~130 KB/s.
   return (
-    <div className="h-12 rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)' }}>
-      <svg width="100%" height="48" viewBox="0 0 200 48" preserveAspectRatio="none">
-        {data.length > 1 && (
-          <polyline
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            points={data.map((v, i) => `${(i / Math.max(1, data.length - 1)) * 200},${48 - Math.min(44, v / 3)}`).join(' ')}
-          />
-        )}
-      </svg>
+    <div className="h-12 rounded-xl overflow-hidden" style={{ background: 'var(--overlay-1)' }}>
+      <Sparkline data={data} color={color} height={48} />
     </div>
   )
 }

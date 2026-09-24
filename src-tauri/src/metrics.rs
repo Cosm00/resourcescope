@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::gpu::{GpuCollector, GpuInfo};
+use crate::processes::{build_process_details, build_process_info, select_top_processes, ProcessDetails, ProcessInfo};
 
 /// Full snapshot of system metrics — serialized to JSON and sent to frontend
 #[derive(Serialize, Clone, Debug)]
@@ -19,6 +20,11 @@ pub struct MetricsSnapshot {
     pub disks: Vec<DiskInfo>,
     pub networks: Vec<NetInfo>,
     pub processes: Vec<ProcessInfo>,
+    /// Total processes on the system; `processes` may be a subset.
+    pub process_count: usize,
+    /// True when `processes` only holds the busiest processes (the UI asks
+    /// for the full list only while the Processes tab is open).
+    pub processes_truncated: bool,
     pub health: HealthInfo,
 }
 
@@ -52,6 +58,8 @@ pub struct DiskInfo {
     pub available_bytes: u64,
     pub usage_pct: f32,
     pub is_removable: bool,
+    pub read_bps: u64,
+    pub write_bps: u64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -61,26 +69,6 @@ pub struct NetInfo {
     pub bytes_sent: u64,
     pub recv_bps: u64,
     pub sent_bps: u64,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub name: String,
-    pub cpu_pct: f32,
-    pub mem_bytes: u64,
-    pub status: String,
-    pub parent_pid: Option<u32>,
-    pub parent_name: Option<String>,
-    pub exe_path: Option<String>,
-    pub cwd: Option<String>,
-    pub cmd: Vec<String>,
-    pub user: Option<String>,
-    pub app_name: String,
-    pub process_kind: String,
-    pub friendly_name: Option<String>,
-    pub explanation: Option<String>,
-    pub bundle_hint: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -132,6 +120,11 @@ pub struct MetricsCollector {
     // Keyed by interface name: sysinfo's iteration order is not guaranteed to
     // be stable when interfaces come and go (VPNs, docking, Wi-Fi toggles).
     prev_net: Option<(Instant, NetCounters)>,
+    /// When the previous collect ran, for turning per-refresh byte counts
+    /// (process and disk I/O) into rates.
+    last_collect: Option<Instant>,
+    /// Send every process instead of the busiest subset.
+    pub full_process_list: bool,
 }
 
 /// Cumulative (received, transmitted) byte counters per interface name.
@@ -148,6 +141,7 @@ fn process_refresh_kind() -> ProcessRefreshKind {
         .with_cmd(UpdateKind::OnlyIfNotSet)
         .with_cwd(UpdateKind::OnlyIfNotSet)
         .with_user(UpdateKind::OnlyIfNotSet)
+        .with_disk_usage()
 }
 
 const USERS_REFRESH_EVERY: Duration = Duration::from_secs(60);
@@ -172,6 +166,8 @@ impl MetricsCollector {
             users,
             users_refreshed_at: Instant::now(),
             prev_net: None,
+            last_collect: None,
+            full_process_list: false,
         }
     }
 
@@ -180,6 +176,20 @@ impl MetricsCollector {
     pub fn refresh_process(&mut self, pid: sysinfo::Pid) {
         self.sys
             .refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, process_refresh_kind());
+    }
+
+    pub fn process_details(&mut self, pid: u32) -> Result<ProcessDetails, String> {
+        let target = sysinfo::Pid::from_u32(pid);
+        self.refresh_process(target);
+        let process = self
+            .sys
+            .process(target)
+            .ok_or_else(|| format!("Process {pid} is no longer running"))?;
+        let mut pid_to_name = HashMap::new();
+        if let Some(parent) = process.parent().and_then(|pp| self.sys.process(pp)) {
+            pid_to_name.insert(parent.pid().as_u32(), parent.name().to_string_lossy().to_string());
+        }
+        Ok(build_process_details(process, &pid_to_name, &self.users))
     }
 
     pub fn collect(&mut self) -> MetricsSnapshot {
@@ -197,6 +207,12 @@ impl MetricsCollector {
             self.users_refreshed_at = Instant::now();
         }
         let now = Instant::now();
+        // Seconds covered by the per-refresh I/O counters below.
+        let io_dt = self
+            .last_collect
+            .map(|t| now.duration_since(t).as_secs_f64().max(0.1));
+        self.last_collect = Some(now);
+        let per_sec = |bytes: u64| io_dt.map(|dt| (bytes as f64 / dt) as u64).unwrap_or(0);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -267,6 +283,8 @@ impl MetricsCollector {
                 available_bytes: avail,
                 usage_pct,
                 is_removable: d.is_removable(),
+                read_bps: per_sec(d.usage().read_bytes),
+                write_bps: per_sec(d.usage().written_bytes),
             }
         }).collect();
 
@@ -316,53 +334,18 @@ impl MetricsCollector {
             .map(|p| (p.pid().as_u32(), p.name().to_string_lossy().to_string()))
             .collect();
 
+        let users = &self.users;
+        // On Linux sysinfo also lists every userland thread as a "process";
+        // those duplicate their parent's CPU/memory, so hide them like `ps`.
         let mut processes: Vec<ProcessInfo> = self.sys.processes().values()
-            .map(|p| {
-                let pid = p.pid().as_u32();
-                let raw_name = p.name().to_string_lossy().to_string();
-                let parent_pid = p.parent().map(|pp| pp.as_u32());
-                let parent_name = parent_pid.and_then(|pp| pid_to_name.get(&pp).cloned());
-                let exe_path = p.exe().map(|x| x.to_string_lossy().to_string());
-                let cwd = p.cwd().map(|x| x.to_string_lossy().to_string());
-                let cmd: Vec<String> = p.cmd().iter().map(|c| c.to_string_lossy().to_string()).collect();
-                let user = p.user_id().map(|uid| {
-                    self.users
-                        .get_user_by_id(uid)
-                        .map(|u| u.name().to_string())
-                        .unwrap_or_else(|| uid.to_string())
-                });
-                let app_name = infer_app_name(&raw_name, exe_path.as_deref(), parent_name.as_deref(), &cmd);
-                let process_kind = infer_process_kind(&raw_name, exe_path.as_deref(), parent_name.as_deref());
-                let friendly_name = friendly_name_for_process(&raw_name);
-                let explanation = explanation_for_process(&raw_name, parent_name.as_deref(), exe_path.as_deref());
-                let bundle_hint = infer_bundle_hint(exe_path.as_deref(), &cmd);
-
-                ProcessInfo {
-                    pid,
-                    name: raw_name,
-                    cpu_pct: p.cpu_usage(),
-                    mem_bytes: p.memory(),
-                    status: format!("{:?}", p.status()),
-                    parent_pid,
-                    parent_name,
-                    exe_path,
-                    cwd,
-                    cmd,
-                    user,
-                    app_name,
-                    process_kind,
-                    friendly_name,
-                    explanation,
-                    bundle_hint,
-                }
-            })
+            .filter(|p| p.thread_kind() != Some(sysinfo::ThreadKind::Userland))
+            .map(|p| build_process_info(p, &pid_to_name, users, io_dt))
             .collect();
-        processes.sort_by(|a, b| {
-            b.cpu_pct.partial_cmp(&a.cpu_pct)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.mem_bytes.cmp(&a.mem_bytes))
-        });
-        processes.truncate(80);
+        let process_count = processes.len();
+        let processes_truncated = !self.full_process_list;
+        if processes_truncated {
+            processes = select_top_processes(processes);
+        }
 
         // ── Health / Temperatures ─────────────────────────────────────────────
         let cpu_temp = pick_cpu_temperature(
@@ -402,6 +385,8 @@ impl MetricsCollector {
             disks,
             networks: networks_info,
             processes,
+            process_count,
+            processes_truncated,
             health: HealthInfo {
                 cpu_temp,
                 gpu_temp,
@@ -409,145 +394,6 @@ impl MetricsCollector {
             },
         }
     }
-}
-
-fn infer_process_kind(name: &str, exe_path: Option<&str>, parent_name: Option<&str>) -> String {
-    let lower = name.to_lowercase();
-    // Normalise Windows separators so one set of rules covers every platform.
-    let exe = exe_path.unwrap_or("").to_lowercase().replace('\\', "/");
-    let parent = parent_name.unwrap_or("").to_lowercase();
-    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
-
-    let system_dirs = [
-        // macOS
-        "/system/",
-        "/usr/libexec/",
-        "/usr/sbin/",
-        // Linux
-        "/usr/lib/systemd/",
-        "/lib/systemd/",
-        "/sbin/",
-        // Windows
-        "/windows/system32/",
-        "/windows/syswow64/",
-        "/windows/systemapps/",
-    ];
-    let windows_services = ["svchost", "services", "lsass", "csrss", "wininit", "winlogon", "smss", "dwm", "spoolsv"];
-    let is_unix_daemon = !cfg!(windows) && lower.len() > 2 && lower.ends_with('d');
-
-    if system_dirs.iter().any(|d| exe.contains(d))
-        || windows_services.contains(&stem)
-        || is_unix_daemon
-        || exe.is_empty() && (lower.starts_with("kworker") || lower.starts_with("ksoftirqd"))
-    {
-        "system-service".to_string()
-    } else if exe.contains(".app/") {
-        "app-process".to_string()
-    } else if parent.contains("helper") || lower.contains("helper") {
-        "helper-process".to_string()
-    } else if exe.starts_with("/opt/homebrew")
-        || exe.starts_with("/usr/local")
-        || exe.starts_with("/usr/bin/")
-        || exe.starts_with("/bin/")
-        || exe.contains("/.cargo/bin/")
-        || exe.contains("/scoop/")
-    {
-        "cli-tool".to_string()
-    } else if exe.contains("/program files") || exe.contains("/appdata/local/programs/") || exe.starts_with("/opt/") || exe.contains("/flatpak/") || exe.starts_with("/snap/") {
-        "app-process".to_string()
-    } else {
-        "background-process".to_string()
-    }
-}
-
-fn infer_app_name(name: &str, exe_path: Option<&str>, parent_name: Option<&str>, cmd: &[String]) -> String {
-    if let Some(path) = exe_path {
-        if let Some(app) = app_name_from_path(path) {
-            return app;
-        }
-    }
-    if let Some(parent) = parent_name {
-        if !parent.is_empty() && parent != name {
-            return parent.to_string();
-        }
-    }
-    if let Some(first) = cmd.first() {
-        if let Some(app) = app_name_from_path(first) {
-            return app;
-        }
-    }
-    friendly_name_for_process(name).unwrap_or_else(|| name.to_string())
-}
-
-fn app_name_from_path(path: &str) -> Option<String> {
-    let p = Path::new(path);
-    let components: Vec<String> = p.iter().map(|s| s.to_string_lossy().to_string()).collect();
-    for part in components {
-        if part.ends_with(".app") {
-            return Some(part.trim_end_matches(".app").to_string());
-        }
-    }
-    None
-}
-
-fn infer_bundle_hint(exe_path: Option<&str>, cmd: &[String]) -> Option<String> {
-    exe_path.and_then(app_name_from_path).or_else(|| cmd.first().and_then(|c| app_name_from_path(c)))
-}
-
-fn friendly_name_for_process(name: &str) -> Option<String> {
-    match name.to_lowercase().as_str() {
-        "mediaanalysisd" => Some("Apple media analysis service".to_string()),
-        "mds" => Some("Spotlight metadata server".to_string()),
-        "mdworker_shared" => Some("Spotlight indexing worker".to_string()),
-        "corespotlightd" => Some("Core Spotlight indexing service".to_string()),
-        "photoanalysisd" => Some("Photos analysis service".to_string()),
-        "cloudd" => Some("iCloud sync service".to_string()),
-        "kernel_task" => Some("macOS kernel task".to_string()),
-        "windowserver" => Some("macOS window compositor".to_string()),
-        "distnoted" => Some("Distributed notifications service".to_string()),
-        // Windows
-        "svchost.exe" => Some("Windows service host".to_string()),
-        "dwm.exe" => Some("Desktop Window Manager".to_string()),
-        "msmpeng.exe" => Some("Microsoft Defender antivirus".to_string()),
-        "searchindexer.exe" => Some("Windows Search indexer".to_string()),
-        "system" => Some("Windows kernel & drivers".to_string()),
-        "memory compression" => Some("Windows memory compression".to_string()),
-        "tiworker.exe" => Some("Windows Update installer worker".to_string()),
-        // Linux
-        "systemd" => Some("systemd init / service manager".to_string()),
-        "xorg" => Some("X11 display server".to_string()),
-        "gnome-shell" => Some("GNOME desktop shell".to_string()),
-        "kwin_wayland" | "kwin_x11" => Some("KDE window compositor".to_string()),
-        "pipewire" => Some("PipeWire audio/video server".to_string()),
-        "tracker-miner-fs-3" => Some("GNOME file indexer".to_string()),
-        "baloo_file" => Some("KDE file indexer".to_string()),
-        _ => None,
-    }
-}
-
-fn explanation_for_process(name: &str, parent_name: Option<&str>, exe_path: Option<&str>) -> Option<String> {
-    let lower = name.to_lowercase();
-    let parent = parent_name.unwrap_or("");
-    let exe = exe_path.unwrap_or("");
-    let msg = match lower.as_str() {
-        "mediaanalysisd" => "Usually triggered by Photos, Spotlight, or macOS media indexing/analysis jobs. High CPU often means the system is scanning or classifying images/video in the background.",
-        "mds" | "mdworker_shared" | "corespotlightd" => "This is part of Spotlight indexing. High CPU or memory usually means files are being indexed or re-indexed.",
-        "photoanalysisd" => "Background photo analysis for the Photos library. Can spike when importing or reprocessing media.",
-        "cloudd" => "Handles iCloud sync. High usage usually means active syncing or conflict resolution.",
-        "kernel_task" => "macOS kernel process. High CPU here can sometimes indicate thermal throttling or drivers pushing work into the kernel.",
-        "windowserver" => "Draws the macOS UI. High usage often comes from many windows, displays, animations, or screen capture apps.",
-        "svchost.exe" => "Hosts one or more Windows services. Check the command line (-k group / -s service) to see which service is busy.",
-        "msmpeng.exe" => "Microsoft Defender's scanning engine. Spikes during scheduled scans, updates, or when many files are written.",
-        "searchindexer.exe" | "tracker-miner-fs-3" | "baloo_file" => "Desktop search indexing. High usage usually means new or changed files are being indexed.",
-        "dwm.exe" | "xorg" | "gnome-shell" | "kwin_wayland" | "kwin_x11" => "Composites the desktop. High usage often comes from many windows, high-refresh displays, animations, or screen capture.",
-        "tiworker.exe" => "Installs Windows updates and optional features. Usually settles once updates finish.",
-        "system" if cfg!(windows) => "The Windows kernel and drivers. Sustained high CPU can point at a misbehaving driver or heavy disk/network I/O.",
-        _ if exe.contains(".app/") => "This process belongs to a desktop app bundle. Open details to inspect the bundle/app path and parent process.",
-        _ if !cfg!(windows) && lower.ends_with('d') => "This looks like a background daemon/service. Check the parent process and executable path for attribution.",
-        _ if !parent.is_empty() => return Some(format!("Likely related to parent process: {parent}.")),
-        _ => return None,
-    };
-    Some(msg.to_string())
 }
 
 // ─── Disk scanner ────────────────────────────────────────────────────────────
@@ -844,23 +690,6 @@ mod tests {
         let sensors = vec![("cpu_thermal temp1", Some(f32::NAN)), ("acpitz temp1", Some(41.0))];
         assert_eq!(pick_cpu_temperature(sensors), Some(41.0));
         assert_eq!(pick_cpu_temperature(vec![("nvme Composite", Some(40.0))]), None);
-    }
-
-    #[test]
-    fn process_kind_understands_windows_paths() {
-        assert_eq!(
-            infer_process_kind("svchost.exe", Some("C:\\Windows\\System32\\svchost.exe"), None),
-            "system-service"
-        );
-        assert_eq!(
-            infer_process_kind("Code.exe", Some("C:\\Program Files\\Microsoft VS Code\\Code.exe"), None),
-            "app-process"
-        );
-        assert_eq!(infer_process_kind("sshd", Some("/usr/sbin/sshd"), None), "system-service");
-        assert_eq!(
-            infer_process_kind("Safari", Some("/Applications/Safari.app/Contents/MacOS/Safari"), None),
-            "app-process"
-        );
     }
 
     #[test]

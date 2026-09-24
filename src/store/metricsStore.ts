@@ -74,6 +74,8 @@ const rings = {
   gpu: makeRing(0),
   netRecv: makeRing(0),
   netSent: makeRing(0),
+  diskRead: makeRing(0),
+  diskWrite: makeRing(0),
 }
 
 // ─── Store interface ──────────────────────────────────────────────────────────
@@ -92,6 +94,8 @@ interface MetricsState {
   health: string
   netRecvBps: number
   netSentBps: number
+  diskReadBps: number
+  diskWriteBps: number
 
   // Slow histories (updated every N ticks)
   cpuHistory: number[]
@@ -99,6 +103,8 @@ interface MetricsState {
   gpuHistory: number[]
   netRecvHistory: number[]
   netSentHistory: number[]
+  diskReadHistory: number[]
+  diskWriteHistory: number[]
   coreUsage: number[]
 
   // Counters
@@ -124,12 +130,16 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
   health: 'good',
   netRecvBps: 0,
   netSentBps: 0,
+  diskReadBps: 0,
+  diskWriteBps: 0,
 
   cpuHistory: Array(HISTORY_LEN).fill(0),
   memHistory: Array(HISTORY_LEN).fill(0),
   gpuHistory: Array(HISTORY_LEN).fill(0),
   netRecvHistory: Array(HISTORY_LEN).fill(0),
   netSentHistory: Array(HISTORY_LEN).fill(0),
+  diskReadHistory: Array(HISTORY_LEN).fill(0),
+  diskWriteHistory: Array(HISTORY_LEN).fill(0),
   coreUsage: [],
 
   tickCount: 0,
@@ -146,6 +156,10 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
     const totalSentBps = s.networks.reduce((acc, n) => acc + n.sent_bps, 0)
     ringPush(rings.netRecv, totalRecvBps / 1000) // KB/s for sparkline scale
     ringPush(rings.netSent, totalSentBps / 1000)
+    const totalReadBps = s.disks.reduce((acc, d) => acc + (d.read_bps ?? 0), 0)
+    const totalWriteBps = s.disks.reduce((acc, d) => acc + (d.write_bps ?? 0), 0)
+    ringPush(rings.diskRead, totalReadBps)
+    ringPush(rings.diskWrite, totalWriteBps)
 
     const fastUpdate: Partial<MetricsState> = {
       snapshot: s,
@@ -159,6 +173,8 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
       health: s.health.overall,
       netRecvBps: totalRecvBps,
       netSentBps: totalSentBps,
+      diskReadBps: totalReadBps,
+      diskWriteBps: totalWriteBps,
       tickCount: get().tickCount + 1,
     }
 
@@ -170,6 +186,8 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
         gpuHistory: ringSnapshot(rings.gpu),
         netRecvHistory: ringSnapshot(rings.netRecv),
         netSentHistory: ringSnapshot(rings.netSent),
+        diskReadHistory: ringSnapshot(rings.diskRead),
+        diskWriteHistory: ringSnapshot(rings.diskWrite),
         coreUsage: s.cpu.core_usage,
       })
     }
