@@ -19,7 +19,7 @@ const UsageBar = React.memo(function UsageBar({
       <span className="text-xs tabular-nums w-10 text-right" style={{ color: 'var(--text-primary)' }}>
         {value.toFixed(1)}%
       </span>
-      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
         <div style={{
           width: `${pct}%`, height: '100%', borderRadius: 9999,
           background: barColor,
@@ -48,7 +48,7 @@ const ProcessRow = React.memo(function ProcessRow({
       className="grid px-5 py-2.5 items-center cursor-pointer select-none"
       style={{
         gridTemplateColumns: '30% 10% 30% 30%',
-        borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.03)',
+        borderBottom: isLast ? 'none' : '1px solid var(--overlay-1)',
         background: isSelected ? 'rgba(79,156,249,0.08)' : 'transparent',
       }}
       onMouseDown={(e) => {
@@ -63,7 +63,7 @@ const ProcessRow = React.memo(function ProcessRow({
         }
       }}
       onMouseEnter={e => {
-        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.025)'
+        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'var(--overlay-1)'
       }}
       onMouseLeave={e => {
         if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent'
@@ -176,7 +176,7 @@ export default function ProcessTable() {
           gridTemplateColumns: '30% 10% 30% 30%',
           color: 'var(--text-muted)',
           borderBottom: '1px solid var(--border)',
-          background: 'rgba(0,0,0,0.15)',
+          background: 'var(--overlay-1)',
         }}>
         {COLS.map(col => (
           <button key={col.key} className="text-left flex items-center gap-1"
@@ -208,7 +208,7 @@ export default function ProcessTable() {
       </div>
 
       {selected ? (
-        <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+        <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)', background: 'var(--overlay-1)' }}>
           <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{selected.friendly_name ?? selected.name}</div>
           <div className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
             {selected.app_name} · PID {selected.pid} · {selected.cpu_pct.toFixed(1)}% CPU · {fmtBytes(selected.mem_bytes)}

@@ -59,7 +59,7 @@ export default function Sidebar({ active, onNavigate }: Props) {
 function NavBtn({ id, icon, label, active, onNavigate, badge }: NavItem & { active: string; onNavigate: (id: string) => void }) {
   const isActive = active === id
   return (
-    <button onClick={() => onNavigate(id)} title={label}
+    <button type="button" onClick={() => onNavigate(id)} aria-label={label} aria-current={active === id ? "page" : undefined}
       className="relative w-full h-10 rounded-xl flex items-center justify-center transition-all duration-150 group"
       style={{
         background: isActive
@@ -68,7 +68,7 @@ function NavBtn({ id, icon, label, active, onNavigate, badge }: NavItem & { acti
         color: isActive ? 'var(--accent-blue)' : 'var(--text-muted)',
       }}
       onMouseEnter={e => {
-        if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'
+        if (!isActive) (e.currentTarget as HTMLElement).style.background = 'var(--overlay-1)'
       }}
       onMouseLeave={e => {
         if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'

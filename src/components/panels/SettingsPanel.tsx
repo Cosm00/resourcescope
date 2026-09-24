@@ -1,5 +1,5 @@
 import React, { ReactNode } from 'react'
-import { useSettingsStore, type RefreshInterval, type MenubarMode } from '../../store/settingsStore'
+import { useSettingsStore, type RefreshInterval, type MenubarMode, type ThemePreference } from '../../store/settingsStore'
 import { getVersion as getAppVersion } from '@tauri-apps/api/app'
 import { useState, useEffect } from 'react'
 import { usePlatformStore } from '../../store/platformStore'
@@ -22,7 +22,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Row({ label, description, children, last = false }: { label: string; description?: string; children: ReactNode; last?: boolean }) {
   return (
-    <div className="flex items-center justify-between px-5 py-4 gap-4" style={{ borderBottom: last ? 'none' : '1px solid rgba(255,255,255,0.04)' }}>
+    <div className="flex items-center justify-between px-5 py-4 gap-4" style={{ borderBottom: last ? 'none' : '1px solid var(--overlay-1)' }}>
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{label}</span>
         {description && <span className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{description}</span>}
@@ -35,7 +35,7 @@ function Row({ label, description, children, last = false }: { label: string; de
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="relative inline-flex items-center flex-shrink-0 rounded-full transition-all duration-200"
-      style={{ width: 40, height: 22, background: checked ? 'linear-gradient(135deg, #4f9cf9 0%, #a78bfa 100%)' : 'rgba(255,255,255,0.08)', border: `1px solid ${checked ? 'transparent' : 'rgba(255,255,255,0.1)'}` }}>
+      style={{ width: 40, height: 22, background: checked ? 'linear-gradient(135deg, #4f9cf9 0%, #a78bfa 100%)' : 'var(--overlay-2)', border: `1px solid ${checked ? 'transparent' : 'var(--overlay-3)'}` }}>
       <span className="inline-block rounded-full transition-all duration-200" style={{ width: 16, height: 16, background: 'white', transform: checked ? 'translateX(20px)' : 'translateX(2px)', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
     </button>
   )
@@ -43,7 +43,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 function Segmented<T extends string>({ options, value, onChange }: { options: { label: string; value: T }[]; value: T; onChange: (v: T) => void }) {
   return (
-    <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)' }}>
+    <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'var(--overlay-2)', border: '1px solid var(--border)' }}>
       {options.map(opt => (
         <button key={String(opt.value)} type="button" onClick={() => onChange(opt.value)} className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
           style={{
@@ -64,7 +64,7 @@ function ThresholdSlider({ value, onChange, label, color }: { value: number; onC
       <span className="text-xs w-24 flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>{label}</span>
       <div className="flex-1 relative">
         <input type="range" min={50} max={99} step={5} value={value} onChange={e => onChange(Number(e.target.value))} className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-          style={{ background: `linear-gradient(to right, ${color} 0%, ${color} ${((value - 50) / 49) * 100}%, rgba(255,255,255,0.1) ${((value - 50) / 49) * 100}%, rgba(255,255,255,0.1) 100%)`, outline: 'none' }} />
+          style={{ background: `linear-gradient(to right, ${color} 0%, ${color} ${((value - 50) / 49) * 100}%, var(--overlay-3) ${((value - 50) / 49) * 100}%, var(--overlay-3) 100%)`, outline: 'none' }} />
       </div>
       <span className="text-xs font-mono w-8 text-right" style={{ color }}>{value}%</span>
     </div>
@@ -157,6 +157,9 @@ export default function SettingsPanel() {
         </div>
 
         <Section title="Display">
+          <Row label="Theme" description="System follows your OS light/dark setting">
+            <Segmented options={[{ label: 'System', value: 'system' }, { label: 'Dark', value: 'dark' }, { label: 'Light', value: 'light' }]} value={s.theme} onChange={v => s.update({ theme: v as ThemePreference })} />
+          </Row>
           <Row label="Temperature Unit" description="Unit for CPU and GPU temperatures">
             <Segmented options={[{ label: '°C', value: 'C' }, { label: '°F', value: 'F' }]} value={s.temperatureUnit} onChange={s.setTemperatureUnit} />
           </Row>
@@ -167,7 +170,7 @@ export default function SettingsPanel() {
 
         <Section title="Data & Performance">
           <Row label="Refresh Interval" description="How often metrics are polled from the system">
-            <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)' }}>
+            <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'var(--overlay-2)', border: '1px solid var(--border)' }}>
               {REFRESH_OPTIONS.map(opt => (
                 <button key={opt.value} type="button" onClick={() => s.setRefreshInterval(opt.value)} className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
                   style={{
@@ -214,7 +217,7 @@ export default function SettingsPanel() {
             <Segmented options={MENUBAR_OPTIONS} value={s.menubarMode} onChange={s.setMenubarMode} />
           </Row>
           <Row label={`${trayWord === 'tray' ? 'Tray' : 'Menu Bar'} Refresh`} description={`How often the ${trayWord} text should update`} last>
-            <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)' }}>
+            <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'var(--overlay-2)', border: '1px solid var(--border)' }}>
               {REFRESH_OPTIONS.map(opt => (
                 <button key={opt.value} type="button" onClick={() => s.setMenubarRefreshInterval(opt.value)} className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
                   style={{

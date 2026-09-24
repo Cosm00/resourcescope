@@ -33,8 +33,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
             alignItems: "center",
             justifyContent: "center",
             height: "100vh",
-            background: "#0d0f14",
-            color: "#e8ecf3",
+            background: "var(--bg-primary)",
+            color: "var(--text-primary)",
             fontFamily: "system-ui, sans-serif",
             gap: "12px",
           }}
@@ -44,11 +44,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
           <div
             style={{
               fontSize: "12px",
-              color: "#8892a4",
+              color: "var(--text-secondary)",
               maxWidth: "500px",
               textAlign: "center",
               fontFamily: "monospace",
-              background: "#181c27",
+              background: "var(--bg-card)",
               padding: "12px",
               borderRadius: "8px",
             }}
