@@ -59,7 +59,7 @@ export default function GpuPanel() {
           {gpu && gpu.utilization_pct !== null ? (
             <Sparkline data={gpuHistory} color="var(--accent-pink)" height={48} fill />
           ) : (
-            <div className="rounded-xl px-3 py-2 text-xs leading-5" style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', border: '1px dashed var(--border)' }}>
+            <div className="rounded-xl px-3 py-2 text-xs leading-5" style={{ background: 'var(--overlay-1)', color: 'var(--text-muted)', border: '1px dashed var(--border)' }}>
               {gpu?.platform === 'macOS'
                 ? 'Live utilization is unavailable in the current sample. ResourceScope is showing helper-backed identity/frequency telemetry instead of inventing a fake usage number.'
                 : 'Live utilization is unavailable from this driver. ResourceScope shows whatever the OS does expose instead of inventing a fake usage number.'}
@@ -81,7 +81,7 @@ export default function GpuPanel() {
             </div>
           </div>
           {gpu ? (
-            <span className="text-[10px] px-2.5 py-1 rounded-full border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border)', background: 'rgba(255,255,255,0.03)' }}>
+            <span className="text-[10px] px-2.5 py-1 rounded-full border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border)', background: 'var(--overlay-1)' }}>
               {prettyBackend(gpu.backend)} · {gpu.support_level}
             </span>
           ) : null}
@@ -118,7 +118,7 @@ function buildSummaryTiles(gpu: GpuInfo, gpuTemp: number | null) {
     {
       label: 'GPU Frequency',
       value: gpu.frequency_mhz !== null ? `${gpu.frequency_mhz} MHz` : 'Not exposed',
-      accent: 'var(--accent-blue, #60a5fa)',
+      accent: 'var(--accent-blue)',
     },
     {
       label: gpu.vendor === 'Apple' ? 'Unified Memory' : 'Video Memory',
@@ -181,7 +181,7 @@ function InfoTile({ label, value, accent }: { label: string; value: string; acce
 
 function DetailTile({ label, value, subtle = false }: { label: string; value: string; subtle?: boolean }) {
   return (
-    <div className="rounded-xl p-4 flex flex-col gap-1.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="rounded-xl p-4 flex flex-col gap-1.5" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
       <span className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>{label}</span>
       <span className="text-sm font-medium break-words leading-6" style={{ color: subtle ? 'var(--text-secondary)' : 'var(--text-primary)' }}>{value}</span>
     </div>

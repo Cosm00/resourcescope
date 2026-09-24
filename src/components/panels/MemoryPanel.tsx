@@ -67,7 +67,7 @@ export default function MemoryPanel() {
         </div>
 
         {/* Stacked bar */}
-        <div className="h-4 rounded-full overflow-hidden flex" style={{ background: 'rgba(255,255,255,0.04)' }}>
+        <div className="h-4 rounded-full overflow-hidden flex" style={{ background: 'var(--overlay-1)' }}>
           <div style={{
             width: `${memPct}%`,
             background: memPct > 90
@@ -142,7 +142,7 @@ function MemBar({ label, bytes, total, color }: { label: string; bytes: number; 
         <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
         <span className="font-mono" style={{ color }}>{fmtBytes(bytes)}</span>
       </div>
-      <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+      <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
         <div style={{
           width: `${pct}%`,
           height: '100%',

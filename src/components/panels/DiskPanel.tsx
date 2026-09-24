@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes, fmtBps } from '../../store/metricsStore'
 import Sparkline from '../Sparkline'
+import { soft } from '../../lib/color'
 import type { DirectoryUsage, DiskInfo, DiskScanResult, PathCrumb, ProcessInfo } from '../../types'
 
 const EMPTY_DISKS: DiskInfo[] = []
@@ -22,11 +23,11 @@ function DiskCard({ disk, onInspect }: { disk: DiskInfo; onInspect?: () => void 
             <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{disk.name} · {disk.fs_type}{disk.is_removable && ' · removable'}</div>
           </div>
         </div>
-        <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: `${usageColor}20`, color: usageColor }}>{pct.toFixed(0)}%</span>
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: soft(usageColor), color: usageColor }}>{pct.toFixed(0)}%</span>
       </div>
 
       <div className="flex flex-col gap-2">
-        <div className="h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-3 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
           <div style={{ width: `${pct}%`, height: '100%', background: pct > 90 ? 'var(--accent-red)' : pct > 75 ? 'linear-gradient(90deg, var(--accent-orange), var(--accent-red))' : 'linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))', borderRadius: 9999, transition: 'width 0.8s ease' }} />
         </div>
         <div className="flex items-center justify-between text-[10px]" style={{ color: 'var(--text-muted)' }}>
@@ -54,7 +55,7 @@ function DiskCard({ disk, onInspect }: { disk: DiskInfo; onInspect?: () => void 
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl px-3 py-2.5 flex flex-col gap-1" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="rounded-xl px-3 py-2.5 flex flex-col gap-1" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
       <span className="text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>{label}</span>
       <span className="text-xs font-bold tabular-nums" style={{ color: 'var(--text-secondary)' }}>{value}</span>
     </div>
@@ -74,7 +75,7 @@ function DiskIcon() {
 function Treemap({ entries, onPick }: { entries: DirectoryUsage[]; onPick: (entry: DirectoryUsage) => void }) {
   const total = entries.reduce((acc, e) => acc + e.bytes, 0)
   return (
-    <div className="flex gap-1 h-28 rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="flex gap-1 h-28 rounded-xl overflow-hidden" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
       {entries.slice(0, 10).map(entry => {
         const width = total > 0 ? Math.max(6, (entry.bytes / total) * 100) : 10
         return (
@@ -88,8 +89,8 @@ function Treemap({ entries, onPick }: { entries: DirectoryUsage[]; onPick: (entr
               background: entry.is_dir ? 'linear-gradient(180deg, rgba(79,156,249,0.35), rgba(167,139,250,0.28))' : 'linear-gradient(180deg, rgba(34,211,238,0.30), rgba(79,156,249,0.24))',
               minWidth: 24,
             }}>
-            <div className="text-[10px] font-semibold truncate" style={{ color: 'white' }}>{entry.name}</div>
-            <div className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.78)' }}>{fmtBytes(entry.bytes)}</div>
+            <div className="text-[10px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{entry.name}</div>
+            <div className="text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>{fmtBytes(entry.bytes)}</div>
           </button>
         )
       })}
@@ -112,7 +113,7 @@ function Breadcrumbs({ crumbs, rootPath, onGo }: { crumbs: PathCrumb[]; rootPath
     <div className="flex flex-wrap items-center gap-2">
       {visible.map((crumb, i) => (
         <React.Fragment key={crumb.path}>
-          <button type="button" onClick={() => onGo(crumb.path)} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <button type="button" onClick={() => onGo(crumb.path)} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'var(--overlay-2)', color: 'var(--text-secondary)', border: '1px solid var(--overlay-2)' }}>
             {i === 0 ? rootPath : crumb.name}
           </button>
           {i < visible.length - 1 && <span style={{ color: 'var(--text-muted)' }}>›</span>}
@@ -244,9 +245,9 @@ export default function DiskPanel() {
                 const pctOfAll = totalSpace > 0 ? (disk.used_bytes / totalSpace) * 100 : 0
                 const active = disk.mount_point === selectedDisk.mount_point
                 return (
-                  <button key={`${disk.mount_point}-${i}`} type="button" onClick={() => setSelectedMount(disk.mount_point)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: active ? 'rgba(79,156,249,0.08)' : 'rgba(255,255,255,0.03)', border: active ? '1px solid rgba(79,156,249,0.2)' : '1px solid rgba(255,255,255,0.05)' }}>
+                  <button key={`${disk.mount_point}-${i}`} type="button" onClick={() => setSelectedMount(disk.mount_point)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: active ? 'rgba(79,156,249,0.08)' : 'var(--overlay-1)', border: active ? '1px solid rgba(79,156,249,0.2)' : '1px solid var(--overlay-2)' }}>
                     <div className="min-w-[110px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{disk.mount_point}</div>
-                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
                       <div style={{ width: `${Math.min(100, pctOfAll)}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-orange), var(--accent-red))' }} />
                     </div>
                     <div className="w-24 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{pctOfAll.toFixed(1)}%</div>
@@ -257,7 +258,7 @@ export default function DiskPanel() {
             </div>
           </div>
 
-          <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
             <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Top directories / files</div>
             {scanResult && selectedDisk && <Breadcrumbs crumbs={scanResult.breadcrumbs} rootPath={selectedDisk.mount_point} onGo={(path) => runScan(path)} />}
             {scanError && <div className="text-xs mb-2" style={{ color: 'var(--accent-red)' }}>{scanError}</div>}
@@ -272,9 +273,9 @@ export default function DiskPanel() {
                 </div>
                 <div className="flex flex-col gap-2">
                   {scanResult.children.map(entry => (
-                    <button key={entry.path} type="button" onClick={() => entry.is_dir && runScan(entry.path)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <button key={entry.path} type="button" onClick={() => entry.is_dir && runScan(entry.path)} className="flex items-center gap-3 px-3 py-2 rounded-xl text-left" style={{ background: 'var(--overlay-1)', border: '1px solid var(--overlay-2)' }}>
                       <div className="min-w-[220px] text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{entry.name}{entry.is_dir ? ' /' : ''}</div>
-                      <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
                         <div style={{ width: `${Math.min(100, entry.usage_pct_of_parent)}%`, height: '100%', background: entry.is_dir ? 'linear-gradient(90deg, var(--accent-blue), var(--accent-purple))' : 'linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))' }} />
                       </div>
                       <div className="w-20 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{entry.usage_pct_of_parent.toFixed(1)}%</div>

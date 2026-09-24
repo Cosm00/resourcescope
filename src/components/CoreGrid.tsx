@@ -38,7 +38,7 @@ export default function CoreGrid() {
         {cores.map((pct, i) => (
           <div key={i} className="flex flex-col items-center gap-1">
             <div className="w-full rounded-sm overflow-hidden"
-              style={{ height: 40, background: 'rgba(255,255,255,0.04)', position: 'relative' }}>
+              style={{ height: 40, background: 'var(--overlay-1)', position: 'relative' }}>
               <div style={{
                 position: 'absolute', bottom: 0, left: 0, right: 0,
                 height: `${Math.max(2, pct)}%`,

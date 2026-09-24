@@ -92,7 +92,7 @@ export default function NetworkPanel() {
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{nets.length} interface{nets.length !== 1 ? 's' : ''} detected</p>
         </div>
 
-        <div className="grid px-5 py-2 text-[10px] uppercase tracking-widest" style={{ gridTemplateColumns: '28% 18% 18% 18% 18%', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.15)' }}>
+        <div className="grid px-5 py-2 text-[10px] uppercase tracking-widest" style={{ gridTemplateColumns: '28% 18% 18% 18% 18%', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'var(--overlay-1)' }}>
           <span>Interface</span>
           <span>↓ Download</span>
           <span>↑ Upload</span>
@@ -102,9 +102,9 @@ export default function NetworkPanel() {
 
         <div className="overflow-y-auto" style={{ maxHeight: 360 }}>
           {nets.length > 0 ? [...nets].sort((a, b) => (b.recv_bps + b.sent_bps) - (a.recv_bps + a.sent_bps)).map((net, i) => (
-            <div key={net.name} className="grid items-center px-5 py-3" style={{ gridTemplateColumns: '28% 18% 18% 18% 18%', borderBottom: i === nets.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.03)' }}>
+            <div key={net.name} className="grid items-center px-5 py-3" style={{ gridTemplateColumns: '28% 18% 18% 18% 18%', borderBottom: i === nets.length - 1 ? 'none' : '1px solid var(--overlay-1)' }}>
               <div className="flex items-center gap-2.5">
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: (net.recv_bps > 0 || net.sent_bps > 0) ? 'var(--accent-green)' : 'rgba(255,255,255,0.15)' }} />
+                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: (net.recv_bps > 0 || net.sent_bps > 0) ? 'var(--accent-green)' : 'var(--overlay-3)' }} />
                 <span className="text-xs font-mono font-medium truncate" style={{ color: 'var(--text-primary)' }}>{net.name}</span>
               </div>
               <span className="text-xs tabular-nums font-mono" style={{ color: 'var(--accent-cyan)' }}>{fmtBps(net.recv_bps)}</span>

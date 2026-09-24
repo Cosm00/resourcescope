@@ -14,8 +14,8 @@ const GaugeRing = React.memo(function GaugeRing({
   value = 0,
   size = 80,
   strokeWidth = 7,
-  color = '#4f9cf9',
-  trackColor = 'rgba(255,255,255,0.05)',
+  color = 'var(--accent-blue)',
+  trackColor = 'var(--overlay-2)',
   label,
   sublabel,
 }: Props) {

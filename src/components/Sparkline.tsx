@@ -10,7 +10,7 @@ interface Props {
 
 const Sparkline = React.memo(function Sparkline({
   data,
-  color = '#4f9cf9',
+  color = 'var(--accent-blue)',
   height = 40,
   width = 200,
   fill = true,

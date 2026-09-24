@@ -12,6 +12,7 @@
     "notification:default",
     "autostart:default",
     "process:allow-restart",
-    "updater:default"
+    "updater:default",
+    "core:window:allow-set-theme"
   ]
 }
