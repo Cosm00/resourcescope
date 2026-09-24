@@ -27,7 +27,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install Rust stable
@@ -53,7 +53,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Type-check frontend
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Type-check and build frontend
         run: npm run build
 
       - name: Check Rust

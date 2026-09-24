@@ -120,11 +120,13 @@ export default function ProcessesPanel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
-  const [selection, setSelection] = useState<Selection>(null)
+  const [pickedSelection, setSelection] = useState<Selection>(null)
   const [busyAction, setBusyAction] = useState<'quit' | 'force' | null>(null)
-  const [confirmGroup, setConfirmGroup] = useState<'quit' | 'force' | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [details, setDetails] = useState<ProcessDetails | null>(null)
+  // Per-selection UI state is tagged with the selection it belongs to, so it
+  // resets itself when the selection changes (no reset-in-effect needed).
+  const [confirmState, setConfirmState] = useState<{ sel: string; kind: 'quit' | 'force' } | null>(null)
+  const [errorState, setErrorState] = useState<{ sel: string; message: string } | null>(null)
+  const [detailsState, setDetailsState] = useState<ProcessDetails | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Ask the backend for every process only while this tab is open.
@@ -173,29 +175,29 @@ export default function ProcessesPanel() {
     return out
   }, [view, filtered, groups, expanded, sortKey, sortDir])
 
+  // Until the user picks something, the top row is selected so the details
+  // pane is never empty.
+  const selection: Selection = pickedSelection ?? (rows[0]
+    ? rows[0].type === 'group' ? { type: 'group', key: rows[0].group.key } : { type: 'proc', pid: rows[0].proc.pid }
+    : null)
+  const selectionId = selection ? (selection.type === 'group' ? `g:${selection.key}` : `p:${selection.pid}`) : ''
   const selectedProc = selection?.type === 'proc' ? processes.find(p => p.pid === selection.pid) ?? null : null
   const selectedGroup = selection?.type === 'group' ? groups.find(g => g.key === selection.key) ?? null : null
-
-  // Default to the top row so the details pane is never empty.
-  useEffect(() => {
-    if (selection || !rows.length) return
-    const first = rows[0]
-    setSelection(first.type === 'group' ? { type: 'group', key: first.group.key } : { type: 'proc', pid: first.proc.pid })
-  }, [rows, selection])
+  const confirmGroup = confirmState?.sel === selectionId ? confirmState.kind : null
+  const actionError = errorState?.sel === selectionId ? errorState.message : null
+  const setActionError = (message: string | null) => setErrorState(message ? { sel: selectionId, message } : null)
 
   // Static details (command line, cwd, ...) load once per selected process.
   const selectedPid = selectedProc?.pid ?? null
+  const details = detailsState && detailsState.pid === selectedPid ? detailsState : null
   useEffect(() => {
-    setDetails(null)
-    setActionError(null)
-    setConfirmGroup(null)
     if (selectedPid === null) return
     let cancelled = false
     invoke<ProcessDetails>('get_process_details', { pid: selectedPid })
-      .then(d => { if (!cancelled) setDetails(d) })
+      .then(d => { if (!cancelled) setDetailsState(d) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [selectedPid, selection?.type === 'group' ? selection.key : null])
+  }, [selectedPid])
 
   const { start, end, total } = useVirtualRows(rows.length, scrollRef)
   const maxCpu = useMemo(() => Math.max(...processes.map(p => p.cpu_pct), 1), [processes])
@@ -215,7 +217,7 @@ export default function ProcessesPanel() {
       setActionError(pids.length > 1 ? `${failures.length} of ${pids.length} processes could not be ended. ${failures[0]}` : failures[0])
     }
     setBusyAction(null)
-    setConfirmGroup(null)
+    setConfirmState(null)
   }
 
   const onGroupAction = (force: boolean) => {
@@ -223,11 +225,19 @@ export default function ProcessesPanel() {
     const kind = force ? 'force' : 'quit'
     // Ending a whole app is destructive; require a second click.
     if (confirmGroup !== kind) {
-      setConfirmGroup(kind)
+      setConfirmState({ sel: selectionId, kind })
       return
     }
     terminate(selectedGroup.procs.map(p => p.pid), force)
   }
+
+  const toggleExpanded = (key: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
@@ -254,13 +264,13 @@ export default function ProcessesPanel() {
           className="grid px-5 items-center cursor-pointer select-none absolute left-0 right-0"
           style={{ top, height: ROW_HEIGHT, gridTemplateColumns, borderBottom: '1px solid var(--overlay-1)', background: active ? 'rgba(79,156,249,0.08)' : 'transparent' }}
           onClick={() => setSelection({ type: 'group', key: g.key })}
-          onDoubleClick={() => setExpanded(prev => { const n = new Set(prev); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n })}
+          onDoubleClick={() => toggleExpanded(g.key)}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelection({ type: 'group', key: g.key }) } }}>
           <div className="min-w-0 pr-3 flex items-center gap-2">
             <button type="button" aria-label={row.expanded ? 'Collapse' : 'Expand'}
               className="w-5 h-5 flex items-center justify-center rounded text-[10px] flex-shrink-0"
               style={{ color: 'var(--text-muted)', background: 'var(--overlay-1)' }}
-              onClick={e => { e.stopPropagation(); setExpanded(prev => { const n = new Set(prev); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n }) }}>
+              onClick={e => { e.stopPropagation(); toggleExpanded(g.key) }}>
               {row.expanded ? '▾' : '▸'}
             </button>
             <div className="min-w-0">
