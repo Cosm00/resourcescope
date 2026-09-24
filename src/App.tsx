@@ -13,7 +13,11 @@ import ProcessesPanel from './components/panels/ProcessesPanel'
 import SettingsPanel from './components/panels/SettingsPanel'
 import { useMetricsStore } from './store/metricsStore'
 import { useSettingsStore } from './store/settingsStore'
+import { usePlatformStore } from './store/platformStore'
 import type { MetricsSnapshot } from './types'
+
+// StrictMode mounts effects twice in dev; only honour "Start in tray" once.
+let startupHandled = false
 
 export default function App() {
   const [activeNav, setActiveNav] = useState('overview')
@@ -22,36 +26,56 @@ export default function App() {
   const showMenubarStats = useSettingsStore(s => s.showMenubarStats)
   const menubarMode = useSettingsStore(s => s.menubarMode)
   const menubarRefreshIntervalMs = useSettingsStore(s => s.menubarRefreshIntervalMs)
-  const setRefreshInterval = useSettingsStore(s => s.setRefreshInterval)
+  const loadPlatform = usePlatformStore(s => s.load)
 
+  // One-time startup: initial snapshot, live subscription, start-in-tray.
+  // Kept separate from the settings effects below so changing a setting
+  // doesn't tear down the event listener or re-fetch a snapshot.
   useEffect(() => {
     invoke<MetricsSnapshot>('get_metrics')
       .then(ingest)
       .catch(err => console.warn('[ResourceScope] Initial metrics failed:', err))
 
-    // Apply persisted refresh interval to backend on startup
-    if (refreshIntervalMs !== 1500) {
-      setRefreshInterval(refreshIntervalMs)
-    }
-
-    invoke('set_show_menubar_stats', { show: showMenubarStats }).catch(err =>
-      console.warn('[ResourceScope] Menubar stats toggle failed:', err),
-    )
-    invoke('set_menubar_mode', { mode: menubarMode }).catch(err =>
-      console.warn('[ResourceScope] Menubar mode failed:', err),
-    )
-    invoke('set_menubar_refresh_interval', { intervalMs: menubarRefreshIntervalMs }).catch(err =>
-      console.warn('[ResourceScope] Menubar refresh interval failed:', err),
-    )
-
     const unlisten = listen<MetricsSnapshot>('metrics_update', (event) => {
       ingest(event.payload)
+    })
+
+    loadPlatform().then(info => {
+      if (info?.tray_available && useSettingsStore.getState().startInTray && !startupHandled) {
+        invoke('hide_to_tray').catch(err => console.warn('[ResourceScope] Start in tray failed:', err))
+      }
+      startupHandled = true
     })
 
     return () => {
       unlisten.then(fn => fn())
     }
-  }, [ingest, refreshIntervalMs, setRefreshInterval, showMenubarStats, menubarMode, menubarRefreshIntervalMs])
+  }, [ingest, loadPlatform])
+
+  // Push persisted preferences to the backend (on startup and when changed).
+  useEffect(() => {
+    invoke('set_refresh_interval', { intervalMs: refreshIntervalMs }).catch(err =>
+      console.warn('[ResourceScope] Refresh interval failed:', err),
+    )
+  }, [refreshIntervalMs])
+
+  useEffect(() => {
+    invoke('set_show_menubar_stats', { show: showMenubarStats }).catch(err =>
+      console.warn('[ResourceScope] Menubar stats toggle failed:', err),
+    )
+  }, [showMenubarStats])
+
+  useEffect(() => {
+    invoke('set_menubar_mode', { mode: menubarMode }).catch(err =>
+      console.warn('[ResourceScope] Menubar mode failed:', err),
+    )
+  }, [menubarMode])
+
+  useEffect(() => {
+    invoke('set_menubar_refresh_interval', { intervalMs: menubarRefreshIntervalMs }).catch(err =>
+      console.warn('[ResourceScope] Menubar refresh interval failed:', err),
+    )
+  }, [menubarRefreshIntervalMs])
 
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>

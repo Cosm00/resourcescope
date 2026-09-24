@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../store/metricsStore'
+import { usePlatformStore, processActionLabels } from '../store/platformStore'
 import type { ProcessInfo } from '../types'
 
 const EMPTY_PROCESSES: ProcessInfo[] = []
@@ -90,6 +91,7 @@ export default function ProcessTable() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [busyAction, setBusyAction] = useState<'quit' | 'force' | null>(null)
+  const actionLabels = processActionLabels(usePlatformStore(p => p.info?.os))
   const [actionError, setActionError] = useState<string | null>(null)
 
   const sorted = useMemo(() => {
@@ -143,26 +145,27 @@ export default function ProcessTable() {
         <div>
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Top Processes</h3>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {processes.length} shown · select a row below to use Quit App or Force Quit here on the overview page
+            {processes.length} shown · select a row below to act on a process from the overview page
           </p>
         </div>
         {selected ? (
           <div className="flex items-center gap-2 flex-wrap justify-end">
+            {actionLabels.graceful && (
             <button
               type="button"
               disabled={busyAction !== null}
               onClick={() => handleTerminate(false)}
               className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
               style={{ background: 'rgba(251,146,60,0.10)', color: 'var(--accent-orange)', border: '1px solid rgba(251,146,60,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-              {busyAction === 'quit' ? 'Quitting…' : 'Quit App'}
-            </button>
+              {busyAction === 'quit' ? actionLabels.gracefulBusy : actionLabels.graceful}
+            </button>)}
             <button
               type="button"
               disabled={busyAction !== null}
               onClick={() => handleTerminate(true)}
               className="px-3 py-2 rounded-xl text-xs font-semibold shadow-sm"
               style={{ background: 'rgba(248,113,113,0.10)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.18)', opacity: busyAction ? 0.7 : 1 }}>
-              {busyAction === 'force' ? 'Force quitting…' : 'Force Quit'}
+              {busyAction === 'force' ? actionLabels.forceBusy : actionLabels.force}
             </button>
           </div>
         ) : null}

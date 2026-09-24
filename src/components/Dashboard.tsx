@@ -1,5 +1,6 @@
 import React from 'react'
 import { useMetricsStore, fmtBytes, fmtBps } from '../store/metricsStore'
+import { fmtTemp } from '../store/settingsStore'
 import type { DiskInfo } from '../types'
 
 const EMPTY_DISKS: DiskInfo[] = []
@@ -40,14 +41,21 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const gpu       = useMetricsStore(s => s.snapshot?.gpu ?? null)
   const gpuPct    = useMetricsStore(s => s.gpuPct)
   const gpuTemp   = useMetricsStore(s => s.gpuTemp)
-  const gpuUsed   = useMetricsStore(s => s.gpuMemUsedGb)
-  const gpuAlloc  = useMetricsStore(s => s.gpuMemAllocatedGb)
 
   const netRecv   = useMetricsStore(s => s.netRecvBps)
   const netSent   = useMetricsStore(s => s.netSentBps)
 
   const disks     = useMetricsStore(s => s.snapshot?.disks ?? EMPTY_DISKS)
+  // The backend lists the system volume (`/` or the Windows system drive) first.
   const primaryDisk = disks[0]
+  const gpuMemTotal = gpu?.memory_allocated_bytes ?? gpu?.memory_total_bytes ?? null
+  const gpuMemUsed = gpu?.memory_used_bytes ?? null
+  const gpuMemSummary = gpuMemUsed !== null && gpuMemTotal
+    ? `${fmtBytes(gpuMemUsed)} / ${fmtBytes(gpuMemTotal)}`
+    : gpuMemTotal ? `${fmtBytes(gpuMemTotal)} total`
+    : gpuMemUsed !== null ? `${fmtBytes(gpuMemUsed)} used` : 'Not exposed'
+  // Don't render a fake 0% when the backend has no utilization source.
+  const gpuHasUtil = gpu?.utilization_pct != null
 
   const cpuHistory = useMetricsStore(s => s.cpuHistory)
   const memHistory = useMetricsStore(s => s.memHistory)
@@ -63,7 +71,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <StatCard
               title="CPU" icon={<CpuSvg />} color="#4f9cf9"
               value={cpuPct.toFixed(1)} unit="%"
-              subValue={cpuTemp !== null ? `${cpuTemp?.toFixed(0)}°C` : undefined}
+              subValue={cpuTemp !== null ? fmtTemp(cpuTemp) : undefined}
               subLabel="Temp"
               gaugeValue={cpuPct}
               tags={[`${cpuCores} cores`, `${cpuFreqGhz} GHz`, 'Click for deep dive']}
@@ -83,10 +91,10 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <ClickableCard onClick={() => onNavigate?.('gpu')}>
             <StatCard
               title="GPU" icon={<GpuSvg />} color="#f472b6"
-              value={gpu ? gpuPct.toFixed(0) : '—'} unit={gpu ? '%' : ''}
-              subValue={gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : gpu ? `${gpuUsed.toFixed(1)} / ${gpuAlloc.toFixed(1)} GB` : undefined}
-              subLabel={gpuTemp !== null ? 'Temp' : gpu ? 'Unified mem' : undefined}
-              gaugeValue={gpu ? gpuPct : undefined}
+              value={gpuHasUtil ? gpuPct.toFixed(0) : '—'} unit={gpuHasUtil ? '%' : ''}
+              subValue={gpuTemp !== null ? fmtTemp(gpuTemp) : gpu ? gpuMemSummary : undefined}
+              subLabel={gpuTemp !== null ? 'Temp' : gpu ? (gpu.vendor === 'Apple' ? 'Unified mem' : 'VRAM') : undefined}
+              gaugeValue={gpuHasUtil ? gpuPct : undefined}
               tags={gpu ? [gpu.name, gpu.core_count ? `${gpu.core_count} cores` : gpu.platform, 'Click for deep dive'] : ['Unavailable']}
               history={gpu ? gpuHistory : undefined}
             />

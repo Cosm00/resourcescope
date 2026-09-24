@@ -1,5 +1,6 @@
 import React from 'react'
-import { useMetricsStore } from '../../store/metricsStore'
+import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
+import { fmtTemp } from '../../store/settingsStore'
 import Sparkline from '../Sparkline'
 import GaugeRing from '../GaugeRing'
 
@@ -27,13 +28,15 @@ export default function GpuPanel() {
                 {gpu ? usageSubtitle(gpu) : 'No GPU telemetry backend is active right now.'}
               </div>
             </div>
-            <GaugeRing value={gpu && gpu.utilization_pct !== null ? gpuPct : 0} size={88} strokeWidth={8} color={gpuPct > 80 ? 'var(--accent-red)' : gpuPct > 60 ? 'var(--accent-orange)' : 'var(--accent-pink)'} />
+            <GaugeRing value={gpu && gpu.utilization_pct !== null ? gpuPct : 0} label={gpu && gpu.utilization_pct !== null ? undefined : '—'} size={88} strokeWidth={8} color={gpuPct > 80 ? 'var(--accent-red)' : gpuPct > 60 ? 'var(--accent-orange)' : 'var(--accent-pink)'} />
           </div>
           {gpu && gpu.utilization_pct !== null ? (
             <Sparkline data={gpuHistory} color="var(--accent-pink)" height={48} fill />
           ) : (
             <div className="rounded-xl px-3 py-2 text-xs leading-5" style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', border: '1px dashed var(--border)' }}>
-              Live utilization is unavailable in the current sample. ResourceScope is showing helper-backed identity/frequency telemetry instead of inventing a fake usage number.
+              {gpu?.platform === 'macOS'
+                ? 'Live utilization is unavailable in the current sample. ResourceScope is showing helper-backed identity/frequency telemetry instead of inventing a fake usage number.'
+                : 'Live utilization is unavailable from this driver. ResourceScope shows whatever the OS does expose instead of inventing a fake usage number.'}
             </div>
           )}
         </div>
@@ -48,7 +51,7 @@ export default function GpuPanel() {
           <div>
             <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>GPU Summary</div>
             <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-              {gpu ? `${gpu.name} · ${gpu.vendor} · ${gpu.core_count ?? 'Unknown'} cores` : 'No GPU metrics are available right now on this machine.'}
+              {gpu ? [gpu.name, gpu.vendor, gpu.core_count ? `${gpu.core_count} cores` : null].filter(Boolean).join(' · ') : 'No GPU metrics are available right now on this machine.'}
             </div>
           </div>
           {gpu ? (
@@ -72,7 +75,7 @@ export default function GpuPanel() {
       <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>What this tab is for</div>
         <p className="text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-          GPU telemetry is wildly platform-specific. ResourceScope prefers honest device-level signals — identity, memory, helper-backed frequency, and real utilization when the OS exposes it — over fake per-process ownership or invented percentages.
+          GPU telemetry is wildly platform-specific. ResourceScope prefers honest device-level signals — identity, memory, clock speed, and real utilization when the OS or vendor tools (macOS IORegistry/powermetrics, Windows GPU perf counters, Linux sysfs, nvidia-smi) expose it — over fake per-process ownership or invented percentages.
         </p>
       </div>
     </div>
@@ -83,16 +86,16 @@ function buildSummaryTiles(gpu: any, gpuTemp: number | null) {
   return [
     {
       label: 'Temperature',
-      value: gpuTemp !== null ? `${gpuTemp.toFixed(0)}°C` : 'Not exposed',
+      value: gpuTemp !== null ? fmtTemp(gpuTemp) : 'Not exposed',
       accent: 'var(--accent-orange)',
     },
     {
       label: 'GPU Frequency',
-      value: gpu.backend.includes('powermetrics') && gpu.power_state !== null ? `${gpu.power_state} MHz` : 'Not exposed',
+      value: gpu.frequency_mhz !== null ? `${gpu.frequency_mhz} MHz` : 'Not exposed',
       accent: 'var(--accent-blue, #60a5fa)',
     },
     {
-      label: 'Unified Memory',
+      label: gpu.vendor === 'Apple' ? 'Unified Memory' : 'Video Memory',
       value: summarizeMemory(gpu),
       accent: 'var(--accent-purple)',
     },
@@ -104,13 +107,14 @@ function buildDetailRows(gpu: any) {
     { label: 'Telemetry Source', value: prettyBackend(gpu.backend) },
     { label: 'Collection Method', value: gpu.collection_method },
     { label: 'Memory', value: summarizeMemory(gpu) },
-    { label: 'GPU Frequency', value: gpu.backend.includes('powermetrics') && gpu.power_state !== null ? `${gpu.power_state} MHz` : 'Not exposed', subtle: gpu.power_state === null },
-    { label: 'Renderer Load', value: gpu.renderer_utilization_pct !== null ? `${gpu.renderer_utilization_pct.toFixed(1)}%` : 'Not exposed', subtle: gpu.renderer_utilization_pct === null },
-    { label: 'Tiler Load', value: gpu.tiler_utilization_pct !== null ? `${gpu.tiler_utilization_pct.toFixed(1)}%` : 'Not exposed', subtle: gpu.tiler_utilization_pct === null },
-    { label: 'Last Submission PID', value: gpu.last_submission_pid !== null ? String(gpu.last_submission_pid) : 'Not exposed', subtle: gpu.last_submission_pid === null },
+    { label: 'GPU Frequency', value: gpu.frequency_mhz !== null ? `${gpu.frequency_mhz} MHz` : 'Not exposed', subtle: gpu.frequency_mhz === null },
+    { label: 'Renderer Load', value: gpu.renderer_utilization_pct !== null ? `${gpu.renderer_utilization_pct.toFixed(1)}%` : 'Not exposed', subtle: gpu.renderer_utilization_pct === null, appleOnly: true },
+    { label: 'Tiler Load', value: gpu.tiler_utilization_pct !== null ? `${gpu.tiler_utilization_pct.toFixed(1)}%` : 'Not exposed', subtle: gpu.tiler_utilization_pct === null, appleOnly: true },
+    { label: 'Last Submission PID', value: gpu.last_submission_pid !== null ? String(gpu.last_submission_pid) : 'Not exposed', subtle: gpu.last_submission_pid === null, appleOnly: true },
     { label: 'Collector Notes', value: gpu.notes ?? 'No collector notes.', subtle: true },
   ]
-  return rows
+  // Renderer/tiler split and submission PID are Apple GPU concepts.
+  return rows.filter(row => !('appleOnly' in row) || gpu.platform === 'macOS')
 }
 
 function usageSubtitle(gpu: any) {
@@ -134,12 +138,9 @@ function prettyBackend(backend: string) {
 function summarizeMemory(gpu: any) {
   const used = gpu.memory_used_bytes ?? gpu.memory_allocated_bytes
   const total = gpu.memory_total_bytes ?? gpu.memory_allocated_bytes
-  const toGb = (bytes: number | null) => (bytes == null ? null : bytes / (1024 ** 3))
-  const usedGb = toGb(used)
-  const totalGb = toGb(total)
-  if (usedGb != null && totalGb != null) return `${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`
-  if (totalGb != null) return `${totalGb.toFixed(1)} GB total`
-  if (usedGb != null) return `${usedGb.toFixed(1)} GB used`
+  if (used != null && total != null) return `${fmtBytes(used)} / ${fmtBytes(total)}`
+  if (total != null) return `${fmtBytes(total)} total`
+  if (used != null) return `${fmtBytes(used)} used`
   return 'Not exposed'
 }
 
