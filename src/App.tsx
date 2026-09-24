@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import Dashboard from './components/Dashboard'
@@ -101,6 +102,21 @@ export default function App() {
   useEffect(() => {
     if (autoCheckUpdates) useUpdateStore.getState().maybeAutoCheck()
   }, [autoCheckUpdates])
+
+  // Theme: System follows the OS (live); the native title bar follows too.
+  const themePref = useSettingsStore(s => s.theme)
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const apply = () => {
+      const resolved = themePref === 'system' ? (media.matches ? 'light' : 'dark') : themePref
+      document.documentElement.dataset.theme = resolved
+    }
+    apply()
+    getCurrentWindow().setTheme(themePref === 'system' ? null : themePref).catch(() => {})
+    if (themePref !== 'system') return
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [themePref])
 
   const csvLogging = useSettingsStore(s => s.csvLogging)
   useEffect(() => {

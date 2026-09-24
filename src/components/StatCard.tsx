@@ -1,4 +1,5 @@
 import React, { useMemo, ReactNode } from 'react'
+import { soft } from '../lib/color'
 import Sparkline from './Sparkline'
 import GaugeRing from './GaugeRing'
 
@@ -18,7 +19,7 @@ interface Props {
 
 const StatCard = React.memo(function StatCard({
   title, icon, value, unit, subValue, subLabel,
-  history, color = '#4f9cf9', gaugeValue, tags = [], onClick,
+  history, color = 'var(--accent-blue)', gaugeValue, tags = [], onClick,
 }: Props) {
   const pct = gaugeValue ?? (typeof value === 'number' && value <= 100 ? value : null)
 
@@ -30,7 +31,7 @@ const StatCard = React.memo(function StatCard({
   }, [pct, color])
 
   const badgeStyle = useMemo(() => ({
-    background: pct && pct > 80 ? 'rgba(248,113,113,0.15)' : pct && pct > 60 ? 'rgba(251,146,60,0.15)' : `${color}15`,
+    background: pct && pct > 80 ? soft('var(--accent-red)') : pct && pct > 60 ? soft('var(--accent-orange)') : soft(color),
     color: pct && pct > 80 ? 'var(--accent-red)' : pct && pct > 60 ? 'var(--accent-orange)' : color,
   }), [pct, color])
 
@@ -42,7 +43,7 @@ const StatCard = React.memo(function StatCard({
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', transition: 'background 0.15s, border-color 0.15s, transform 0.15s', willChange: 'transform' }}
       onMouseEnter={e => {
         e.currentTarget.style.background = 'var(--bg-card-hover)'
-        e.currentTarget.style.borderColor = `${color}40`
+        e.currentTarget.style.borderColor = 'var(--border-light)'
         e.currentTarget.style.transform = 'translateY(-1px)'
       }}
       onMouseLeave={e => {
@@ -52,7 +53,7 @@ const StatCard = React.memo(function StatCard({
       }}>
       <div className="flex items-center justify-between min-h-[32px]">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0" style={{ background: `${color}20`, color }}>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0" style={{ background: soft(color), color }}>
             {icon}
           </div>
           <span className="text-xs font-medium tracking-wide uppercase truncate" style={{ color: 'var(--text-muted)' }}>

@@ -67,7 +67,7 @@ export interface SettingsState extends Settings {
 const STORAGE_KEY = 'resourcescope-settings-v1'
 
 export const DEFAULTS: Settings = {
-  theme: 'system',
+  theme: 'dark',
   temperatureUnit: 'C',
   bytesFormat: 'auto',
   refreshIntervalMs: 1500,

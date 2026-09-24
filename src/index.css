@@ -3,7 +3,11 @@
 @layer base {
   * { box-sizing: border-box; }
 
+  /* Dark is the default; [data-theme="light"] overrides below. The theme
+     attribute is set on <html> by App.tsx from the Theme setting (System
+     follows prefers-color-scheme). */
   :root {
+    color-scheme: dark;
     --bg-primary: #0d0f14;
     --bg-secondary: #13161e;
     --bg-card: #181c27;
@@ -15,17 +19,61 @@
     --accent-red: #f87171;
     --accent-green: #34d399;
     --accent-pink: #f472b6;
+    /* Tinted backgrounds for badges/chips behind accent-coloured text. */
+    --accent-blue-soft: rgba(79,156,249,0.14);
+    --accent-cyan-soft: rgba(0,212,170,0.14);
+    --accent-purple-soft: rgba(167,139,250,0.14);
+    --accent-orange-soft: rgba(251,146,60,0.14);
+    --accent-red-soft: rgba(248,113,113,0.14);
+    --accent-green-soft: rgba(52,211,153,0.14);
+    --accent-pink-soft: rgba(244,114,182,0.14);
     --text-primary: #e8ecf3;
     --text-secondary: #8892a4;
-    --text-muted: #4a5568;
+    --text-muted: #6b7689;
     --border: #1e2840;
     --border-light: #252d3d;
     /* Translucent layers over cards (hover rows, tracks, chips). */
     --overlay-1: rgba(255,255,255,0.03);
     --overlay-2: rgba(255,255,255,0.06);
+    --overlay-3: rgba(255,255,255,0.10);
+    --scrollbar: #2a3347;
+    --scrollbar-hover: #3a4560;
     /* Two-series chart pair (validated for CVD separation in dark + light). */
     --series-a: #0d9488;
     --series-b: #ea580c;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f3f5f9;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f7f9fc;
+    /* Darker accent steps keep text ≥ 4.5:1 on white. */
+    --accent-blue: #2563eb;
+    --accent-cyan: #0f766e;
+    --accent-purple: #7c3aed;
+    --accent-orange: #c2410c;
+    --accent-red: #dc2626;
+    --accent-green: #047857;
+    --accent-pink: #db2777;
+    --accent-blue-soft: rgba(37,99,235,0.10);
+    --accent-cyan-soft: rgba(15,118,110,0.10);
+    --accent-purple-soft: rgba(124,58,237,0.10);
+    --accent-orange-soft: rgba(194,65,12,0.10);
+    --accent-red-soft: rgba(220,38,38,0.10);
+    --accent-green-soft: rgba(4,120,87,0.10);
+    --accent-pink-soft: rgba(219,39,119,0.10);
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+    --border-light: #cbd5e1;
+    --overlay-1: rgba(15,23,42,0.03);
+    --overlay-2: rgba(15,23,42,0.06);
+    --overlay-3: rgba(15,23,42,0.10);
+    --scrollbar: #cbd5e1;
+    --scrollbar-hover: #94a3b8;
   }
 
   body {
@@ -41,8 +89,8 @@
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2a3347; border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4560; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
 @keyframes pulse-ring {
   0%, 100% { opacity: 0.4; transform: scale(1); }

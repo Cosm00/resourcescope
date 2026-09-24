@@ -80,7 +80,7 @@ export default function CpuPanel() {
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(56px, 1fr))' }}>
             {cores.map((pct, i) => (
               <div key={i} className="flex flex-col items-center gap-1.5">
-                <div className="w-full rounded-md overflow-hidden relative" style={{ height: 64, background: 'rgba(255,255,255,0.04)' }}>
+                <div className="w-full rounded-md overflow-hidden relative" style={{ height: 64, background: 'var(--overlay-1)' }}>
                   <div style={{
                     position: 'absolute', bottom: 0, left: 0, right: 0,
                     height: `${Math.max(2, pct)}%`,
@@ -124,7 +124,7 @@ export default function CpuPanel() {
               <div className="text-xl font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
                 {loadAvg[i].toFixed(2)}
               </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--overlay-2)' }}>
                 <div style={{
                   width: `${Math.min(100, (loadAvg[i] / (cpu?.core_count ?? 1)) * 100)}%`,
                   height: '100%',
