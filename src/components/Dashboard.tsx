@@ -31,6 +31,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const cpuPct    = useMetricsStore(s => s.cpuPct)
   const cpuTemp   = useMetricsStore(s => s.cpuTemp)
   const cpuCores  = useMetricsStore(s => s.snapshot?.cpu.core_count ?? 0)
+  const gpuCount  = useMetricsStore(s => s.snapshot?.gpus.length ?? 0)
   const cpuModel  = useMetricsStore(s => s.snapshot?.cpu.model ?? '')
   const cpuFreq   = useMetricsStore(s => s.snapshot?.cpu.frequency_mhz ?? 0)
 
@@ -56,6 +57,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     : gpuMemUsed !== null ? `${fmtBytes(gpuMemUsed)} used` : 'Not exposed'
   // Don't render a fake 0% when the backend has no utilization source.
   const gpuHasUtil = gpu?.utilization_pct != null
+  const extraGpus = Math.max(0, gpuCount - 1)
 
   const cpuHistory = useMetricsStore(s => s.cpuHistory)
   const memHistory = useMetricsStore(s => s.memHistory)
@@ -95,7 +97,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               subValue={gpuTemp !== null ? fmtTemp(gpuTemp) : gpu ? gpuMemSummary : undefined}
               subLabel={gpuTemp !== null ? 'Temp' : gpu ? (gpu.vendor === 'Apple' ? 'Unified mem' : 'VRAM') : undefined}
               gaugeValue={gpuHasUtil ? gpuPct : undefined}
-              tags={gpu ? [gpu.name, gpu.core_count ? `${gpu.core_count} cores` : gpu.platform, 'Click for deep dive'] : ['Unavailable']}
+              tags={gpu ? [gpu.name, extraGpus > 0 ? `+${extraGpus} more GPU${extraGpus > 1 ? 's' : ''}` : gpu.core_count ? `${gpu.core_count} cores` : gpu.platform, 'Click for deep dive'] : ['Unavailable']}
               history={gpu ? gpuHistory : undefined}
             />
           </ClickableCard>

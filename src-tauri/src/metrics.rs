@@ -17,7 +17,10 @@ pub struct MetricsSnapshot {
     pub timestamp: u64,
     pub cpu: CpuInfo,
     pub memory: MemInfo,
+    /// Primary GPU (first of `gpus`); kept for simple consumers.
     pub gpu: Option<GpuInfo>,
+    /// Every GPU, most relevant first.
+    pub gpus: Vec<GpuInfo>,
     /// Empty on machines without a battery.
     pub batteries: Vec<BatteryInfo>,
     pub disks: Vec<DiskInfo>,
@@ -256,7 +259,8 @@ impl MetricsCollector {
         let swap_used_bytes = self.sys.used_swap();
 
         // ── GPU ──────────────────────────────────────────────────────────────
-        let gpu = self.gpu.collect();
+        let gpus = self.gpu.collect();
+        let gpu = gpus.first().cloned();
 
         // ── Disks ────────────────────────────────────────────────────────────
         let mut seen_devices = HashSet::new();
@@ -362,8 +366,9 @@ impl MetricsCollector {
             self.components.iter().map(|c| (c.label(), c.temperature())),
         );
 
-        let gpu_temp = gpu.as_ref().and_then(|g| g.temperature_c);
-        let gpu_util = gpu.as_ref().and_then(|g| g.utilization_pct).unwrap_or(0.0);
+        // Health follows the hottest / busiest GPU, not just the primary one.
+        let gpu_temp = gpus.iter().filter_map(|g| g.temperature_c).reduce(f32::max);
+        let gpu_util = gpus.iter().filter_map(|g| g.utilization_pct).fold(0.0, f32::max);
 
         let overall = if usage_pct > 90.0 || cpu_temp.is_some_and(|t| t > 95.0) || gpu_util > 95.0 || gpu_temp.is_some_and(|t| t > 95.0) {
             "critical"
@@ -392,6 +397,7 @@ impl MetricsCollector {
                 swap_used_bytes,
             },
             gpu,
+            gpus,
             batteries: self.battery.collect(),
             disks,
             networks: networks_info,
@@ -681,6 +687,7 @@ pub(crate) mod tests {
             cpu: CpuInfo { usage_pct: 10.0, core_usage: vec![10.0; 4], core_count: 4, model: "Test CPU".into(), load_avg: [0.0; 3], frequency_mhz: 3000 },
             memory: MemInfo { total_bytes: 16_000_000_000, used_bytes: 4_000_000_000, available_bytes: 12_000_000_000, usage_pct: 25.0, swap_total_bytes: 0, swap_used_bytes: 0 },
             gpu: None,
+            gpus: vec![],
             batteries: vec![],
             disks: vec![DiskInfo {
                 name: "disk0".into(), mount_point: "/".into(), fs_type: "ext4".into(),

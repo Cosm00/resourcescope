@@ -78,6 +78,12 @@ const rings = {
   diskWrite: makeRing(0),
 }
 
+/** Stable per-GPU key for history rings. */
+export function gpuKey(g: { adapter_index: number | null; name: string }, i: number): string {
+  return `${g.adapter_index ?? i}:${g.name}`
+}
+const gpuRings = new Map<string, { buf: Float32Array; head: number }>()
+
 // ─── Store interface ──────────────────────────────────────────────────────────
 interface MetricsState {
   // Raw snapshot
@@ -101,6 +107,8 @@ interface MetricsState {
   cpuHistory: number[]
   memHistory: number[]
   gpuHistory: number[]
+  /** Utilization history per GPU, keyed by `gpuKey`. */
+  gpuHistories: Record<string, number[]>
   netRecvHistory: number[]
   netSentHistory: number[]
   diskReadHistory: number[]
@@ -136,6 +144,7 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
   cpuHistory: Array(HISTORY_LEN).fill(0),
   memHistory: Array(HISTORY_LEN).fill(0),
   gpuHistory: Array(HISTORY_LEN).fill(0),
+  gpuHistories: {},
   netRecvHistory: Array(HISTORY_LEN).fill(0),
   netSentHistory: Array(HISTORY_LEN).fill(0),
   diskReadHistory: Array(HISTORY_LEN).fill(0),
@@ -151,6 +160,13 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
     ringPush(rings.cpu, s.cpu.usage_pct)
     ringPush(rings.mem, s.memory.usage_pct)
     ringPush(rings.gpu, s.gpu?.utilization_pct ?? 0)
+    const gpus = s.gpus ?? []
+    gpus.forEach((g, i) => {
+      const key = gpuKey(g, i)
+      let ring = gpuRings.get(key)
+      if (!ring) gpuRings.set(key, (ring = makeRing(0)))
+      ringPush(ring, g.utilization_pct ?? 0)
+    })
 
     const totalRecvBps = s.networks.reduce((acc, n) => acc + n.recv_bps, 0)
     const totalSentBps = s.networks.reduce((acc, n) => acc + n.sent_bps, 0)
@@ -184,6 +200,7 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
         cpuHistory: ringSnapshot(rings.cpu),
         memHistory: ringSnapshot(rings.mem),
         gpuHistory: ringSnapshot(rings.gpu),
+        gpuHistories: Object.fromEntries(gpus.map((g, i) => [gpuKey(g, i), ringSnapshot(gpuRings.get(gpuKey(g, i))!)])),
         netRecvHistory: ringSnapshot(rings.netRecv),
         netSentHistory: ringSnapshot(rings.netSent),
         diskReadHistory: ringSnapshot(rings.diskRead),
