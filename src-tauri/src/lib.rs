@@ -1,5 +1,6 @@
 mod gpu;
 mod metrics;
+mod processes;
 
 use metrics::{is_system_mount, scan_directory_usage, DiskScanResult, MetricsCollector, MetricsSnapshot};
 use serde::Serialize;
@@ -53,6 +54,24 @@ async fn get_metrics(state: tauri::State<'_, CollectorState>) -> Result<MetricsS
     tauri::async_runtime::spawn_blocking(move || lock(&collector).collect())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The Processes tab asks for every process while it is open; other views only
+/// need the busiest subset, which keeps each tick's IPC payload small.
+#[tauri::command]
+fn set_full_process_list(enabled: bool, state: tauri::State<CollectorState>) {
+    lock(&state).full_process_list = enabled;
+}
+
+#[tauri::command]
+async fn get_process_details(
+    pid: u32,
+    state: tauri::State<'_, CollectorState>,
+) -> Result<processes::ProcessDetails, String> {
+    let collector = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || lock(&collector).process_details(pid))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -403,6 +422,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_metrics,
             get_platform_info,
+            get_process_details,
+            set_full_process_list,
             set_refresh_interval,
             hide_to_tray,
             set_show_menubar_stats,

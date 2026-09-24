@@ -49,7 +49,7 @@ const Sparkline = React.memo(function Sparkline({
         </linearGradient>
       </defs>
       {fill && <path d={fillD} fill={`url(#${gradId})`} />}
-      <path d={pathD} fill="none" stroke={color} strokeWidth="1.5"
+      <path d={pathD} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke"
         strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )

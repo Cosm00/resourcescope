@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { useMetricsStore, fmtBytes } from '../../store/metricsStore'
-import type { DirectoryUsage, DiskInfo, DiskScanResult, PathCrumb } from '../../types'
+import { useMetricsStore, fmtBytes, fmtBps } from '../../store/metricsStore'
+import Sparkline from '../Sparkline'
+import type { DirectoryUsage, DiskInfo, DiskScanResult, PathCrumb, ProcessInfo } from '../../types'
 
 const EMPTY_DISKS: DiskInfo[] = []
 
@@ -31,6 +32,10 @@ function DiskCard({ disk, onInspect }: { disk: DiskInfo; onInspect?: () => void 
         <div className="flex items-center justify-between text-[10px]" style={{ color: 'var(--text-muted)' }}>
           <span>{fmtBytes(disk.used_bytes)} used</span>
           <span>{fmtBytes(disk.available_bytes)} free</span>
+        </div>
+        <div className="flex items-center justify-between text-[10px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+          <span>Read {fmtBps(disk.read_bps)}</span>
+          <span>Write {fmtBps(disk.write_bps)}</span>
         </div>
       </div>
 
@@ -117,6 +122,52 @@ function Breadcrumbs({ crumbs, rootPath, onGo }: { crumbs: PathCrumb[]; rootPath
   )
 }
 
+const EMPTY_PROCS: ProcessInfo[] = []
+
+function IoActivity() {
+  const readBps = useMetricsStore(s => s.diskReadBps)
+  const writeBps = useMetricsStore(s => s.diskWriteBps)
+  const readHistory = useMetricsStore(s => s.diskReadHistory)
+  const writeHistory = useMetricsStore(s => s.diskWriteHistory)
+  const processes = useMetricsStore(s => s.snapshot?.processes ?? EMPTY_PROCS)
+  const top = useMemo(
+    () => processes
+      .filter(p => p.disk_read_bps + p.disk_write_bps > 0)
+      .sort((a, b) => (b.disk_read_bps + b.disk_write_bps) - (a.disk_read_bps + a.disk_write_bps))
+      .slice(0, 6),
+    [processes],
+  )
+  return (
+    <div className="rounded-2xl p-5 grid grid-cols-1 lg:grid-cols-2 gap-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <div className="flex flex-col gap-3">
+        <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Disk activity</span>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Read</span>
+            <span className="text-xl font-bold tabular-nums" style={{ color: 'var(--accent-cyan)' }}>{fmtBps(readBps)}</span>
+            <Sparkline data={readHistory} color="var(--accent-cyan)" height={40} fill />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Write</span>
+            <span className="text-xl font-bold tabular-nums" style={{ color: 'var(--accent-orange)' }}>{fmtBps(writeBps)}</span>
+            <Sparkline data={writeHistory} color="var(--accent-orange)" height={40} fill />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 min-w-0">
+        <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Top disk users</span>
+        {top.length === 0 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>No process is reading or writing right now.</span>}
+        {top.map(p => (
+          <div key={p.pid} className="flex items-center justify-between gap-3 text-xs">
+            <span className="truncate" style={{ color: 'var(--text-primary)' }}>{p.friendly_name ?? p.name} <span style={{ color: 'var(--text-muted)' }}>· {p.pid}</span></span>
+            <span className="tabular-nums flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>↓{fmtBps(p.disk_read_bps)} ↑{fmtBps(p.disk_write_bps)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function DiskPanel() {
   const disks = useMetricsStore(s => s.snapshot?.disks ?? EMPTY_DISKS)
   const [selectedMount, setSelectedMount] = useState<string | null>(null)
@@ -151,6 +202,7 @@ export default function DiskPanel() {
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 animate-fade-slide">
+      <IoActivity />
       {disks.length > 1 && (
         <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
           <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>All Volumes · {disks.length} disks</span>
