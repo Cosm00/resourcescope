@@ -31,25 +31,35 @@ const REFRESH_EVERY: Duration = Duration::from_secs(10);
 pub struct BatteryCollector {
     cached: Vec<BatteryInfo>,
     last_refresh: Option<Instant>,
-    /// Stop polling after the manager fails to initialise (e.g. no power
-    /// supply class in a container); a laptop always has one.
-    unavailable: bool,
+    /// Consecutive read failures. Before the first success we give up after a
+    /// few (no power-supply support, e.g. a container); once batteries have
+    /// been seen, failures (resume from sleep, a flaky ACPI read) are retried.
+    failures: u32,
+    ever_succeeded: bool,
 }
+
+const GIVE_UP_AFTER: u32 = 3;
 
 impl BatteryCollector {
     pub fn new() -> Self {
-        Self { cached: Vec::new(), last_refresh: None, unavailable: false }
+        Self { cached: Vec::new(), last_refresh: None, failures: 0, ever_succeeded: false }
     }
 
     pub fn collect(&mut self) -> Vec<BatteryInfo> {
         let due = self.last_refresh.map(|t| t.elapsed() >= REFRESH_EVERY).unwrap_or(true);
-        if due && !self.unavailable {
+        let given_up = !self.ever_succeeded && self.failures >= GIVE_UP_AFTER;
+        if due && !given_up {
             self.last_refresh = Some(Instant::now());
             // A fresh Manager each time keeps the collector `Send` on every
             // platform (IOKit handles are not) and picks up hot-swapped packs.
             match read_batteries() {
-                Some(list) => self.cached = list,
-                None => self.unavailable = true,
+                Some(list) => {
+                    self.cached = list;
+                    self.failures = 0;
+                    self.ever_succeeded = true;
+                }
+                // Keep showing the last reading through a transient failure.
+                None => self.failures = self.failures.saturating_add(1),
             }
         }
         self.cached.clone()

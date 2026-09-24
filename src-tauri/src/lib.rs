@@ -25,6 +25,7 @@ use tauri::ActivationPolicy;
 type CollectorState = Arc<Mutex<MetricsCollector>>;
 type HistoryState = Arc<Mutex<history::History>>;
 type AlertState = Arc<Mutex<alerts::AlertEngine>>;
+struct FullProcessListState(Arc<AtomicBool>);
 type IntervalState = Arc<AtomicU64>;
 type MenubarStatsState = Arc<AtomicBool>;
 type MenubarModeState = Arc<Mutex<String>>;
@@ -69,8 +70,8 @@ async fn get_metrics(state: tauri::State<'_, CollectorState>) -> Result<MetricsS
 /// The Processes tab asks for every process while it is open; other views only
 /// need the busiest subset, which keeps each tick's IPC payload small.
 #[tauri::command]
-fn set_full_process_list(enabled: bool, state: tauri::State<CollectorState>) {
-    lock(&state).full_process_list = enabled;
+fn set_full_process_list(enabled: bool, state: tauri::State<FullProcessListState>) {
+    state.0.store(enabled, Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -207,17 +208,25 @@ async fn scan_disk_directory(path: String) -> Result<DiskScanResult, String> {
         .map_err(|e| e.to_string())?
 }
 
+// Async + blocking pool: it needs the collector lock, which the metrics
+// thread holds for a whole collect; a sync command would freeze the UI.
 #[tauri::command]
-fn terminate_process(pid: u32, force: bool, state: tauri::State<CollectorState>) -> Result<(), String> {
+async fn terminate_process(pid: u32, force: bool, state: tauri::State<'_, CollectorState>) -> Result<(), String> {
+    let collector = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || terminate_process_blocking(pid, force, &collector))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn terminate_process_blocking(pid: u32, force: bool, state: &CollectorState) -> Result<(), String> {
     use sysinfo::{Pid, Signal};
 
-    if pid == std::process::id() {
-        return Err("Refusing to terminate ResourceScope itself.".into());
-    }
-
-    let mut collector = lock(&state);
+    let mut collector = lock(state);
     let target = Pid::from_u32(pid);
     collector.refresh_process(target);
+    if collector.is_own_process_tree(target) {
+        return Err("Refusing to end ResourceScope or its own helper processes.".into());
+    }
 
     let proc = collector
         .sys
@@ -499,7 +508,9 @@ fn start_metrics_loop(app: AppHandle, shared: LoopShared) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let collector = Arc::new(Mutex::new(MetricsCollector::new()));
+    let collector_inner = MetricsCollector::new();
+    let full_process_list = FullProcessListState(Arc::clone(&collector_inner.full_process_list));
+    let collector = Arc::new(Mutex::new(collector_inner));
     let collector_for_loop = Arc::clone(&collector);
 
     // Default interval: 1500ms — changeable at runtime via set_refresh_interval
@@ -545,6 +556,7 @@ pub fn run() {
         .manage(menubar_mode_state)
         .manage(menubar_interval_state)
         .manage(TrayAvailable(AtomicBool::new(false)))
+        .manage(full_process_list)
         .manage(UpdaterConfigured(updater_configured))
         .invoke_handler(tauri::generate_handler![
             get_metrics,
@@ -582,12 +594,12 @@ pub fn run() {
                 Ok(()) => app.state::<TrayAvailable>().0.store(true, Ordering::Relaxed),
                 Err(e) => eprintln!("system tray unavailable, close will quit instead of hiding: {e}"),
             }
-            // Launched at login: start hidden in the tray (if there is one),
-            // without flashing the window first.
+            // The window is created hidden (tauri.conf.json `visible: false`)
+            // so a login launch can stay in the tray without flashing it.
             if std::env::args().any(|a| a == MINIMIZED_ARG) && tray_available(app.handle()) {
                 let _ = hide_main_window(app.handle());
-            } else {
-                set_launch_presence(app.handle(), true);
+            } else if let Err(e) = show_main_window(app.handle()) {
+                eprintln!("could not show main window: {e}");
             }
 
             let history: HistoryState = Arc::new(Mutex::new(history::History::new(

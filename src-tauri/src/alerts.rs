@@ -95,7 +95,6 @@ pub struct AlertEngine {
     cpu_temp: Sustained,
     gpu_temp: Sustained,
     disk_last: HashMap<String, u64>,
-    disk_armed: HashMap<String, bool>,
     /// Lowest battery level already warned about this discharge (20 or 10).
     battery_warned_at: Option<u8>,
 }
@@ -104,6 +103,9 @@ impl AlertEngine {
     pub fn evaluate(&mut self, s: &MetricsSnapshot, now: u64) -> Vec<Notification> {
         let mut out = Vec::new();
         if !self.config.enabled {
+            // Forget partial state, so re-enabling while already above a
+            // threshold still waits the full sustain time.
+            *self = AlertEngine { config: self.config.clone(), ..Default::default() };
             return out;
         }
         let c = self.config.clone();
@@ -146,19 +148,15 @@ impl AlertEngine {
             }
         }
 
+        // Alert when a disk crosses its threshold, then remind at most every
+        // DISK_COOLDOWN_MS while it stays full.
         for d in &s.disks {
-            let armed = self.disk_armed.entry(d.mount_point.clone()).or_insert(true);
-            if d.usage_pct < c.disk_pct - HYSTERESIS {
-                *armed = true;
-                continue;
-            }
-            if d.usage_pct < c.disk_pct || !*armed {
+            if d.usage_pct < c.disk_pct {
                 continue;
             }
             let last = self.disk_last.get(&d.mount_point).copied();
             if last.map(|t| now.saturating_sub(t) >= DISK_COOLDOWN_MS).unwrap_or(true) {
                 self.disk_last.insert(d.mount_point.clone(), now);
-                *armed = false;
                 out.push(Notification {
                     title: format!("Disk {} is {:.0}% full", d.mount_point, d.usage_pct),
                     body: format!(
@@ -260,6 +258,20 @@ mod tests {
     }
 
     #[test]
+    fn reenabling_waits_the_full_sustain_time() {
+        let mut e = engine(60);
+        let mut snap = crate::metrics::tests::fake_snapshot();
+        snap.cpu.usage_pct = 99.0;
+        assert!(e.evaluate(&snap, 0).is_empty()); // starts the timer
+        e.config.enabled = false;
+        assert!(e.evaluate(&snap, 30_000).is_empty());
+        e.config.enabled = true;
+        // Would have fired at 60s if the old timer survived.
+        assert!(e.evaluate(&snap, 61_000).is_empty());
+        assert_eq!(e.evaluate(&snap, 122_000).len(), 1);
+    }
+
+    #[test]
     fn human_units() {
         assert_eq!(human_bytes(24_300_000), "24 MB");
         assert_eq!(human_bytes(15_000_000_000), "15.0 GB");
@@ -319,6 +331,11 @@ mod tests {
         let first = e.evaluate(&snap, 1_000);
         assert_eq!(first.len(), 2, "{first:?}");
         assert!(e.evaluate(&snap, 2_000).is_empty());
+        // Still full six hours later: one reminder for the disk.
+        let later = 1_000 + DISK_COOLDOWN_MS;
+        let reminder = e.evaluate(&snap, later);
+        assert!(reminder.iter().any(|n| n.title.starts_with("Disk")), "{reminder:?}");
+        assert!(e.evaluate(&snap, later + 1).is_empty());
         // Battery keeps draining past 10%: one more warning.
         snap.batteries[0].charge_pct = 9.0;
         let second = e.evaluate(&snap, 3_000);
