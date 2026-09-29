@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERBNzNFQUVBM0FFODUxRjAKUldUd1VlZzY2dXB6MnVtQmxQS1p3Q20vblB5NWFveG4zcSsrdWVCakZ5b3ltWFlYRXZjdDVxMWYK",
       "endpoints": [
         "https://github.com/Cosm00/resourcescope/releases/latest/download/latest.json"
       ]
