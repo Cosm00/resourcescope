@@ -23,6 +23,7 @@ extern "C" {
     fn IOServiceGetMatchingService(main_port: u32, matching: *mut std::ffi::c_void) -> IoObject;
     fn IOServiceOpen(service: IoObject, owning_task: u32, kind: u32, connect: *mut IoObject) -> KernReturn;
     fn IOObjectRelease(object: IoObject) -> KernReturn;
+    fn IOServiceClose(connect: IoObject) -> KernReturn;
     fn IOConnectCallStructMethod(
         connection: IoObject,
         selector: u32,
@@ -66,17 +67,27 @@ const KERNEL_INDEX_SMC: u32 = 2;
 const SMC_CMD_READ_BYTES: u8 = 5;
 const SMC_CMD_READ_KEYINFO: u8 = 9;
 
+struct CoreKey {
+    key: u32,
+    name: [u8; 4],
+    /// From the probe's key-info call, so each later read is one IOKit call.
+    info: KeyInfo,
+}
+
 struct Smc {
     connection: IoObject,
     /// Core keys that returned a plausible reading when probed.
-    core_keys: Vec<(u32, [u8; 4])>,
+    core_keys: Vec<CoreKey>,
 }
 
 enum State {
     Uninit,
     Ready(Smc),
-    Unavailable,
+    /// Probe failed; retried after `RETRY_AFTER` in case it was transient.
+    Unavailable(std::time::Instant),
 }
+
+const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 static STATE: Mutex<State> = Mutex::new(State::Uninit);
 
@@ -100,8 +111,11 @@ fn call(connection: IoObject, input: &KeyData) -> Option<KeyData> {
     (rc == 0 && output.result == 0).then_some(output)
 }
 
-fn read_temperature(connection: IoObject, key: u32) -> Option<f32> {
-    let info = call(connection, &KeyData { key, data8: SMC_CMD_READ_KEYINFO, ..Default::default() })?.key_info;
+fn key_info(connection: IoObject, key: u32) -> Option<KeyInfo> {
+    Some(call(connection, &KeyData { key, data8: SMC_CMD_READ_KEYINFO, ..Default::default() })?.key_info)
+}
+
+fn read_temperature(connection: IoObject, key: u32, info: KeyInfo) -> Option<f32> {
     let value = call(
         connection,
         &KeyData { key, data8: SMC_CMD_READ_BYTES, key_info: KeyInfo { data_size: info.data_size, ..Default::default() }, ..Default::default() },
@@ -138,11 +152,18 @@ fn open() -> Option<Smc> {
         for digit in b"0123456789ABCDEF" {
             for suffix in [b'C', b'c'] {
                 let name = [b'T', b'C', *digit, suffix];
-                if read_temperature(connection, fourcc(&name)).is_some() {
-                    core_keys.push((fourcc(&name), name));
-                    break;
+                let key = fourcc(&name);
+                if let Some(info) = key_info(connection, key) {
+                    if read_temperature(connection, key, info).is_some() {
+                        core_keys.push(CoreKey { key, name, info });
+                        break;
+                    }
                 }
             }
+        }
+        if core_keys.is_empty() {
+            IOServiceClose(connection);
+            return None;
         }
         Some(Smc { connection, core_keys })
     }
@@ -152,18 +173,23 @@ fn open() -> Option<Smc> {
 /// or exposes no per-core keys.
 pub fn core_temperatures() -> Vec<CoreTemp> {
     let mut state = STATE.lock().unwrap_or_else(|p| p.into_inner());
-    if matches!(*state, State::Uninit) {
+    let retry = match &*state {
+        State::Uninit => true,
+        State::Unavailable(since) => since.elapsed() >= RETRY_AFTER,
+        State::Ready(_) => false,
+    };
+    if retry {
         *state = match open() {
-            Some(smc) if !smc.core_keys.is_empty() => State::Ready(smc),
-            _ => State::Unavailable,
+            Some(smc) => State::Ready(smc),
+            None => State::Unavailable(std::time::Instant::now()),
         };
     }
     let State::Ready(smc) = &*state else { return Vec::new() };
     smc.core_keys
         .iter()
-        .filter_map(|(key, name)| {
-            let celsius = read_temperature(smc.connection, *key)?;
-            let core = (name[2] as char).to_digit(16)?;
+        .filter_map(|k| {
+            let celsius = read_temperature(smc.connection, k.key, k.info)?;
+            let core = (k.name[2] as char).to_digit(16)?;
             Some(CoreTemp { label: format!("Core {core}"), celsius })
         })
         .collect()
