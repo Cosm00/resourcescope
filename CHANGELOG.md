@@ -1,4 +1,4 @@
-## [Unreleased]
+## [1.2.1] - 2026-09-29
 
 ### Added
 - **Automatic updates** (once a signing key is configured): background checks every 6 hours, silent signature-verified downloads, a notification and a "Restart to update" button. Settings toggles for automatic checking and downloading.
