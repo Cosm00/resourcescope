@@ -1,8 +1,10 @@
 import React, { useMemo } from 'react'
-import { useMetricsStore, fmtBytes } from '../store/metricsStore'
+import { useMetricsStore, fmtBytes, fmtBps } from '../store/metricsStore'
 import type { ProcessInfo } from '../types'
 
-type Mode = 'cpu' | 'memory'
+type Mode = 'cpu' | 'memory' | 'network'
+
+const netOf = (p: ProcessInfo) => p.net_rx_bps + p.net_tx_bps
 
 export default function TopProcessesPanel({
   title,
@@ -21,6 +23,9 @@ export default function TopProcessesPanel({
     const list = [...processes]
     if (mode === 'cpu') {
       list.sort((a, b) => b.cpu_pct - a.cpu_pct)
+    } else if (mode === 'network') {
+      // Idle processes aren't "top" anything.
+      return list.filter(p => netOf(p) > 0).sort((a, b) => netOf(b) - netOf(a)).slice(0, limit)
     } else {
       list.sort((a, b) => b.mem_bytes - a.mem_bytes)
     }
@@ -40,13 +45,22 @@ export default function TopProcessesPanel({
         {ranked.map(proc => (
           <ProcessRow key={proc.pid} proc={proc} mode={mode} />
         ))}
+        {ranked.length === 0 && (
+          <div className="text-xs py-2" style={{ color: 'var(--text-muted)' }}>
+            {mode === 'network' ? 'No process is using the network right now.' : 'No processes yet.'}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
 function ProcessRow({ proc, mode }: { proc: ProcessInfo; mode: Mode }) {
-  const primaryValue = mode === 'cpu' ? `${proc.cpu_pct.toFixed(1)}%` : fmtBytes(proc.mem_bytes)
+  const primaryValue = mode === 'cpu'
+    ? `${proc.cpu_pct.toFixed(1)}%`
+    : mode === 'network'
+      ? `↓ ${fmtBps(proc.net_rx_bps)} · ↑ ${fmtBps(proc.net_tx_bps)}`
+      : fmtBytes(proc.mem_bytes)
   const pct = mode === 'cpu' ? Math.min(100, proc.cpu_pct) : 0
 
   return (
@@ -64,7 +78,7 @@ function ProcessRow({ proc, mode }: { proc: ProcessInfo; mode: Mode }) {
           <div style={{ width: `${pct}%`, height: '100%', background: pct > 80 ? 'var(--accent-red)' : pct > 60 ? 'var(--accent-orange)' : 'var(--accent-blue)' }} />
         </div>
       )}
-      <div className="w-24 text-right text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{primaryValue}</div>
+      <div className={`${mode === 'network' ? 'w-44' : 'w-24'} text-right text-xs tabular-nums`} style={{ color: 'var(--text-secondary)' }}>{primaryValue}</div>
     </div>
   )
 }

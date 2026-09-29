@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::battery::{BatteryCollector, BatteryInfo};
 use crate::gpu::{GpuCollector, GpuInfo};
+use crate::netproc::{NetProcCollector, ProcNetStatus};
 use crate::processes::{build_process_details, build_process_info, select_top_processes, ProcessDetails, ProcessInfo};
 
 /// Full snapshot of system metrics — serialized to JSON and sent to frontend
@@ -31,6 +32,8 @@ pub struct MetricsSnapshot {
     /// True when `processes` only holds the busiest processes (the UI asks
     /// for the full list only while the Processes tab is open).
     pub processes_truncated: bool,
+    /// Whether per-process network rates are available, and what they cover.
+    pub process_net: ProcNetStatus,
     pub health: HealthInfo,
 }
 
@@ -42,6 +45,8 @@ pub struct CpuInfo {
     pub model: String,
     pub load_avg: [f64; 3],
     pub frequency_mhz: u64,
+    /// Per-core / per-cluster temperatures when the platform exposes them.
+    pub core_temps: Vec<CoreTemp>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -130,6 +135,7 @@ pub struct MetricsCollector {
     pub components: Components,
     pub gpu: GpuCollector,
     battery: BatteryCollector,
+    netproc: NetProcCollector,
     users: Users,
     users_refreshed_at: Instant,
     // Keyed by interface name: sysinfo's iteration order is not guaranteed to
@@ -181,6 +187,7 @@ impl MetricsCollector {
             components,
             gpu,
             battery: BatteryCollector::new(),
+            netproc: NetProcCollector::new(),
             users,
             users_refreshed_at: Instant::now(),
             prev_net: None,
@@ -379,6 +386,13 @@ impl MetricsCollector {
             .map(|p| build_process_info(p, &pid_to_name, users, io_dt))
             .collect();
         let process_count = processes.len();
+        let net_rates = self.netproc.sample();
+        for p in &mut processes {
+            if let Some(rate) = net_rates.get(&p.pid) {
+                p.net_rx_bps = rate.rx_bps;
+                p.net_tx_bps = rate.tx_bps;
+            }
+        }
         crate::processes::regroup_shared_hosts(&mut processes);
         let processes_truncated = !self.full_process_list.load(std::sync::atomic::Ordering::Relaxed);
         if processes_truncated {
@@ -389,6 +403,14 @@ impl MetricsCollector {
         let cpu_temp = pick_cpu_temperature(
             self.components.iter().map(|c| (c.label(), c.temperature())),
         );
+        #[allow(unused_mut)]
+        let mut core_temps = core_temperatures(self.components.iter().map(|c| (c.label(), c.temperature())));
+        // sysinfo reads only a few SMC keys on Intel Macs; the per-core
+        // ones need our own SMC reader.
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        if core_temps.is_empty() {
+            core_temps = crate::smc::core_temperatures();
+        }
 
         // Health follows the hottest / busiest GPU, not just the primary one.
         let gpu_temp = gpus.iter().filter_map(|g| g.temperature_c).reduce(f32::max);
@@ -411,6 +433,7 @@ impl MetricsCollector {
                 model,
                 load_avg,
                 frequency_mhz,
+                core_temps,
             },
             memory: MemInfo {
                 total_bytes,
@@ -428,6 +451,7 @@ impl MetricsCollector {
             processes,
             process_count,
             processes_truncated,
+            process_net: self.netproc.status(),
             health: HealthInfo {
                 cpu_temp,
                 gpu_temp,
@@ -682,6 +706,76 @@ where
     best.map(|(_, t)| t)
 }
 
+/// One per-core (or per-cluster / per-CCD) CPU temperature reading.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CoreTemp {
+    pub label: String,
+    pub celsius: f32,
+}
+
+/// Per-core CPU temperatures from sensor labels, in core order:
+/// `coretemp Core N` (Intel/Linux), `k10temp Tccd N` (AMD/Linux, one per
+/// chiplet), `pACC/eACC MTR Temp SensorN` (Apple silicon performance /
+/// efficiency clusters, falling back to `PMU tdie*`). Empty when the platform
+/// has no per-core sensors (Windows without admin-only WMI, VMs).
+pub fn core_temperatures<'a, I>(sensors: I) -> Vec<CoreTemp>
+where
+    I: IntoIterator<Item = (&'a str, Option<f32>)>,
+{
+    fn number_after(label: &str, marker: &str) -> Option<u32> {
+        let rest = &label[label.find(marker)? + marker.len()..];
+        let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok()
+    }
+
+    // (kind, index, °C); kinds sort Intel cores, AMD CCDs, Apple P, E, dies.
+    let mut found: Vec<(u8, u32, f32)> = Vec::new();
+    for (label, temp) in sensors {
+        let Some(t) = temp.filter(|t| t.is_finite() && *t > 0.0 && *t < 150.0) else { continue };
+        let l = label.to_lowercase();
+        let entry = if l.contains("coretemp") || l.starts_with("core ") {
+            number_after(&l, "core ").map(|n| (0, n))
+        } else if l.contains("tccd") {
+            number_after(&l, "tccd").map(|n| (1, n))
+        } else if l.contains("pacc mtr temp sensor") {
+            number_after(&l, "sensor").map(|n| (2, n))
+        } else if l.contains("eacc mtr temp sensor") {
+            number_after(&l, "sensor").map(|n| (3, n))
+        } else if l.contains("pmu") && l.contains("tdie") {
+            number_after(&l, "tdie").map(|n| (4, n))
+        } else {
+            None
+        };
+        if let Some((kind, index)) = entry {
+            found.push((kind, index, t));
+        }
+    }
+    // Die sensors are only a stand-in when the cluster sensors are missing.
+    if found.iter().any(|(k, _, _)| *k == 2 || *k == 3) {
+        found.retain(|(k, _, _)| *k != 4);
+    }
+    found.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    found.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+
+    // Apple's sensor numbers aren't core numbers, so count them instead.
+    let mut ordinal = [0u32; 5];
+    found
+        .into_iter()
+        .map(|(kind, index, celsius)| {
+            ordinal[kind as usize] += 1;
+            let n = ordinal[kind as usize];
+            let label = match kind {
+                0 => format!("Core {index}"),
+                1 => format!("CCD {index}"),
+                2 => format!("P-core {n}"),
+                3 => format!("E-core {n}"),
+                _ => format!("Die {n}"),
+            };
+            CoreTemp { label, celsius }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -695,6 +789,8 @@ pub(crate) mod tests {
             mem_bytes: mem,
             disk_read_bps: 0,
             disk_write_bps: 0,
+            net_rx_bps: 0,
+            net_tx_bps: 0,
             status: "Run".into(),
             parent_pid: None,
             parent_name: None,
@@ -708,7 +804,7 @@ pub(crate) mod tests {
         };
         MetricsSnapshot {
             timestamp: 1_000,
-            cpu: CpuInfo { usage_pct: 10.0, core_usage: vec![10.0; 4], core_count: 4, model: "Test CPU".into(), load_avg: [0.0; 3], frequency_mhz: 3000 },
+            cpu: CpuInfo { usage_pct: 10.0, core_usage: vec![10.0; 4], core_count: 4, model: "Test CPU".into(), load_avg: [0.0; 3], frequency_mhz: 3000, core_temps: vec![] },
             memory: MemInfo { total_bytes: 16_000_000_000, used_bytes: 4_000_000_000, available_bytes: 12_000_000_000, usage_pct: 25.0, swap_total_bytes: 0, swap_used_bytes: 0 },
             gpu: None,
             gpus: vec![],
@@ -722,6 +818,7 @@ pub(crate) mod tests {
             processes: vec![proc(1, "idle", 0.5, 10_000_000), proc(2, "busy", 88.0, 500_000_000)],
             process_count: 2,
             processes_truncated: false,
+            process_net: ProcNetStatus { available: false, scope: String::new(), note: None },
             health: HealthInfo { cpu_temp: None, gpu_temp: None, overall: "good".into() },
         }
     }
@@ -762,6 +859,37 @@ pub(crate) mod tests {
             ("nvme Composite", Some(80.0)),
         ];
         assert_eq!(pick_cpu_temperature(sensors), Some(60.0));
+    }
+
+    #[test]
+    fn core_temperatures_across_platforms() {
+        let intel = vec![
+            ("coretemp Package id 0", Some(60.0)),
+            ("coretemp Core 4", Some(58.0)),
+            ("coretemp Core 0", Some(55.0)),
+            ("nvme Composite", Some(40.0)),
+        ];
+        let got = core_temperatures(intel);
+        assert_eq!(got.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Core 0", "Core 4"]);
+        assert_eq!(got[0].celsius, 55.0);
+
+        let amd = vec![("k10temp Tctl", Some(65.0)), ("k10temp Tccd2", Some(61.0)), ("k10temp Tccd1", Some(63.0))];
+        assert_eq!(core_temperatures(amd).iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["CCD 1", "CCD 2"]);
+
+        let apple = vec![
+            ("PMU tdie1", Some(45.0)),
+            ("eACC MTR Temp Sensor1", Some(40.0)),
+            ("pACC MTR Temp Sensor7", Some(48.0)),
+            ("pACC MTR Temp Sensor3", Some(47.0)),
+            ("eACC MTR Temp Sensor0", Some(f32::NAN)),
+        ];
+        let got = core_temperatures(apple);
+        assert_eq!(got.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["P-core 1", "P-core 2", "E-core 1"]);
+        assert_eq!(got[0].celsius, 47.0);
+
+        let apple_dies = vec![("PMU tdie3", Some(45.0)), ("PMU tdie1", Some(44.0)), ("PMU tcal", Some(50.0))];
+        assert_eq!(core_temperatures(apple_dies).iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Die 1", "Die 2"]);
+        assert!(core_temperatures(vec![("acpitz temp1", Some(41.0))]).is_empty());
     }
 
     #[test]

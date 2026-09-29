@@ -45,8 +45,13 @@ Tauri's updater only installs bundles signed with your private key. Do this once
    signed `.tar.gz` / `.zip` / `.AppImage` update bundles and a `latest.json`
    manifest to the draft release.
 
-5. **Publish the draft release.** `/releases/latest/` ignores drafts, so
-   installed apps only see the update once the release is published.
+5. **That's it.** The workflow builds into a draft and its last job
+   (`publish-release`) publishes it and marks it Latest once all four
+   platforms succeeded — `/releases/latest/` ignores drafts, so installed apps
+   see the update from that moment. If a platform fails, the release stays a
+   draft; re-run the failed job and it publishes when it passes. To publish an
+   older draft without rebuilding, run the Release workflow manually with
+   `publish_tag` set (e.g. `v1.2.1`).
 
 > Losing the private key means existing installs can no longer verify
 > updates. Back it up somewhere safe (e.g. a password manager).

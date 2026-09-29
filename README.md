@@ -14,7 +14,7 @@ Built with **Tauri v2**, a **Rust** backend, and a **React/TypeScript** frontend
 - **Memory** — used / available / total, swap
 - **GPU** — every GPU in the system: utilization, VRAM, temperature and clock where the OS or vendor tools expose them (macOS IORegistry/powermetrics, Windows perf counters, Linux sysfs, `nvidia-smi`)
 - **Disk** — volumes with usage, live read/write rates, and a storage examiner that finds what's using space
-- **Network** — per-interface rates and totals
+- **Network** — per-interface rates and totals, plus per-process traffic (Linux: TCP; macOS: nettop; Windows: when run as administrator)
 - **Processes** — every process, grouped by app (Chrome, Electron, …) or flat; CPU, memory, disk I/O, owner, command line; end a process or a whole app
 - **Battery** — charge, time remaining, health, cycle count and power draw on laptops
 - **History** — 30 days of metrics (10-second detail for 24 hours) with charts, a table view and CSV export; optional continuous CSV logging
@@ -97,9 +97,9 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 - [x] Settings panel (refresh interval, thresholds, units, theme, tray behaviour)
 - [x] System tray with mini stats; launch at login
 - [x] History, export / CSV logging
-- [ ] GPU: AMD/Intel temperatures on Windows (ADL / IGCL), Intel utilization on Linux (i915/xe PMU)
-- [ ] macOS: multi-GPU (Intel Macs) and `powermetrics` per-core temps
-- [ ] Per-process network usage
+- [x] GPU: AMD/Intel temperatures on Windows (driver-reported via D3DKMT), Intel utilization on Linux (i915 PMU / DRM fdinfo)
+- [x] macOS: multi-GPU (Intel Macs) and per-core temps (Apple silicon sensors, Intel-Mac SMC — no root needed)
+- [x] Per-process network usage
 
 ---
 
@@ -109,14 +109,13 @@ Rust Backend (Tauri v2 + sysinfo + tokio)
 ResourceScope now uses a backend-based GPU collector instead of pretending every OS exposes the same telemetry.
 
 Current state:
-- **macOS:** uses `system_profiler` + dynamic IORegistry discovery and can optionally use an elevated `powermetrics` helper for fuller GPU telemetry
-- **Windows:** DXGI adapter discovery plus the `GPU Engine` / `GPU Adapter Memory` perf counters for live utilization and dedicated VRAM (matches Task Manager); NVIDIA cards add temperature and clock via `nvidia-smi`
-- **Linux:** `/sys/class/drm` + `hwmon` (AMD: utilization, VRAM, clock, temperature; Intel: clock, temperature); NVIDIA via `nvidia-smi` from the proprietary driver
+- **macOS:** every IOAccelerator (multi-GPU Intel Macs and eGPUs included) with identity from `system_profiler`; utilization, memory, and on AMD temperature/clock from `PerformanceStatistics`; optionally an elevated `powermetrics` helper for GPU active residency
+- **Windows:** DXGI adapter discovery plus the `GPU Engine` / `GPU Adapter Memory` perf counters for live utilization and dedicated VRAM, and driver-reported temperature via `D3DKMTQueryAdapterInfo` for AMD/Intel/NVIDIA (all match Task Manager); NVIDIA cards add clock via `nvidia-smi`
+- **Linux:** `/sys/class/drm` + `hwmon` (AMD: utilization, VRAM, clock, temperature; Intel: utilization via the i915 PMU or DRM fdinfo, clock, temperature); NVIDIA via `nvidia-smi` from the proprietary driver
 
-Recommended next backend layers:
-- **Windows vendor-enhanced:** temperatures for AMD/Intel (ADL / IGCL)
-- **Linux:** Intel utilization via `i915`/`xe` perf (PMU) counters
-- **macOS phase 2:** broaden Intel Mac fallback and multi-GPU discovery
+Possible next layers:
+- **Windows vendor SDKs** (ADL / IGCL / NVML) for fan speed, power and hotspot temperatures
+- **Linux:** the xe PMU for system-wide Intel utilization without relying on fdinfo
 
 What this means in practice:
 - the app now reports the active GPU backend and support level directly in the UI

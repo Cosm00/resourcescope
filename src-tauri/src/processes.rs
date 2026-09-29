@@ -18,6 +18,10 @@ pub struct ProcessInfo {
     pub mem_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
+    /// Network receive / send rates; 0 where the platform can't attribute
+    /// traffic to processes (see `MetricsSnapshot::process_net`).
+    pub net_rx_bps: u64,
+    pub net_tx_bps: u64,
     pub status: String,
     pub parent_pid: Option<u32>,
     pub parent_name: Option<String>,
@@ -80,6 +84,8 @@ pub fn build_process_info(
         mem_bytes: p.memory(),
         disk_read_bps: rate(usage.read_bytes),
         disk_write_bps: rate(usage.written_bytes),
+        net_rx_bps: 0,
+        net_tx_bps: 0,
         status: format!("{:?}", p.status()),
         parent_pid,
         parent_name,
@@ -119,12 +125,13 @@ pub fn build_process_details(
 }
 
 /// The subset sent when the full table isn't on screen: the busiest
-/// processes by CPU, by memory, and by disk I/O, so every "top N" view (CPU,
-/// Memory, overview) has what it needs. Returned sorted by CPU, then memory.
+/// processes by CPU, by memory, by disk I/O and by network traffic, so every
+/// "top N" view (CPU, Memory, Network, overview) has what it needs. Returned sorted by CPU, then memory.
 pub fn select_top_processes(all: Vec<ProcessInfo>) -> Vec<ProcessInfo> {
     const BY_CPU: usize = 50;
     const BY_MEM: usize = 50;
     const BY_IO: usize = 20;
+    const BY_NET: usize = 20;
 
     let mut keep: HashSet<u32> = HashSet::new();
     let mut idx: Vec<usize> = (0..all.len()).collect();
@@ -138,6 +145,14 @@ pub fn select_top_processes(all: Vec<ProcessInfo>) -> Vec<ProcessInfo> {
         idx.iter()
             .take(BY_IO)
             .filter(|&&i| all[i].disk_read_bps + all[i].disk_write_bps > 0)
+            .map(|&i| all[i].pid),
+    );
+
+    idx.sort_by_key(|&i| std::cmp::Reverse(all[i].net_rx_bps + all[i].net_tx_bps));
+    keep.extend(
+        idx.iter()
+            .take(BY_NET)
+            .filter(|&&i| all[i].net_rx_bps + all[i].net_tx_bps > 0)
             .map(|&i| all[i].pid),
     );
 
@@ -408,6 +423,8 @@ mod tests {
             mem_bytes: mem,
             disk_read_bps: io,
             disk_write_bps: 0,
+            net_rx_bps: 0,
+            net_tx_bps: 0,
             status: "Run".into(),
             parent_pid: None,
             parent_name: None,

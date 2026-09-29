@@ -7,6 +7,13 @@ export interface CpuInfo {
   model: string
   load_avg: [number, number, number]
   frequency_mhz: number
+  /** Per-core / per-cluster (Apple) / per-CCD (AMD) temperatures; may be empty. */
+  core_temps: CoreTemp[]
+}
+
+export interface CoreTemp {
+  label: string
+  celsius: number
 }
 
 export interface MemInfo {
@@ -84,6 +91,9 @@ export interface ProcessInfo {
   mem_bytes: number
   disk_read_bps: number
   disk_write_bps: number
+  /** 0 when the platform can't attribute traffic (see `process_net`). */
+  net_rx_bps: number
+  net_tx_bps: number
   status: string
   parent_pid: number | null
   parent_name: string | null
@@ -163,6 +173,7 @@ export interface MetricsSnapshot {
   processes: ProcessInfo[]
   process_count: number
   processes_truncated: boolean
+  process_net: ProcNetStatus
   health: HealthInfo
 }
 
@@ -179,4 +190,12 @@ export interface HistoryPoint {
   disk_write_bps: number | null
   cpu_temp_c: number | null
   battery_pct: number | null
+}
+
+/** Whether per-process network rates are available on this machine. */
+export interface ProcNetStatus {
+  available: boolean
+  /** What's counted, e.g. "TCP" (Linux) or "TCP + UDP". */
+  scope: string
+  note: string | null
 }

@@ -1,6 +1,6 @@
 import React from 'react'
 import { useMetricsStore } from '../../store/metricsStore'
-import { useSettingsStore } from '../../store/settingsStore'
+import { fmtTemp, useSettingsStore } from '../../store/settingsStore'
 import Sparkline from '../Sparkline'
 import GaugeRing from '../GaugeRing'
 import TopProcessesPanel from '../TopProcessesPanel'
@@ -9,6 +9,12 @@ function coreColor(pct: number): string {
   if (pct > 80) return 'var(--accent-red)'
   if (pct > 60) return 'var(--accent-orange)'
   if (pct > 40) return 'var(--accent-blue)'
+  return 'var(--accent-cyan)'
+}
+
+function tempColor(celsius: number): string {
+  if (celsius >= 90) return 'var(--accent-red)'
+  if (celsius >= 75) return 'var(--accent-orange)'
   return 'var(--accent-cyan)'
 }
 
@@ -104,6 +110,29 @@ export default function CpuPanel() {
           </div>
         )}
       </div>
+
+      {(cpu?.core_temps.length ?? 0) > 0 && (
+        <div className="rounded-2xl p-5 flex flex-col gap-4"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+              Core Temperatures
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              Hottest {fmtTemp(Math.max(...cpu!.core_temps.map(t => t.celsius)))}
+            </span>
+          </div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))' }}>
+            {cpu!.core_temps.map(t => (
+              <div key={t.label} className="rounded-lg px-3 py-2 flex flex-col gap-0.5"
+                style={{ background: 'var(--overlay-1)' }}>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.label}</span>
+                <span className="text-sm font-bold tabular-nums" style={{ color: tempColor(t.celsius) }}>{fmtTemp(t.celsius)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <TopProcessesPanel
         title="Top CPU Processes"
