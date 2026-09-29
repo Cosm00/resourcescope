@@ -4,6 +4,7 @@ mod gpu;
 mod history;
 mod metrics;
 mod processes;
+mod updates;
 
 use metrics::{is_system_mount, scan_directory_usage, DiskScanResult, MetricsCollector, MetricsSnapshot};
 use serde::Serialize;
@@ -138,6 +139,46 @@ fn notify(app: &AppHandle, n: &alerts::Notification) -> Result<(), String> {
         .body(&n.body)
         .show()
         .map_err(|e| e.to_string())
+}
+
+/// Flush history to disk now (quit, or before an update restarts the app).
+pub(crate) fn save_history_now<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(h) = app.try_state::<HistoryState>() {
+        lock(&h).save_if_dirty();
+    }
+}
+
+// ─── Updates ─────────────────────────────────────────────────────────────────
+
+fn updater_ready(app: &AppHandle) -> Result<(), String> {
+    if app.try_state::<UpdaterConfigured>().is_some_and(|s| s.0) {
+        Ok(())
+    } else {
+        Err("In-app updates aren't configured for this build.".into())
+    }
+}
+
+#[tauri::command]
+fn update_status(app: AppHandle) -> updates::UpdateStatus {
+    app.state::<updates::UpdateManager>().status()
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<updates::UpdateStatus, String> {
+    updater_ready(&app)?;
+    Ok(updates::check(&app, false).await)
+}
+
+#[tauri::command]
+async fn update_install(app: AppHandle) -> Result<(), String> {
+    updater_ready(&app)?;
+    updates::install_and_restart(&app).await
+}
+
+/// Mirrors the Settings toggles into the background update loop.
+#[tauri::command]
+fn set_update_prefs(auto_check: bool, auto_download: bool, app: AppHandle) {
+    app.state::<updates::UpdateManager>().set_auto(auto_check, auto_download);
 }
 
 #[tauri::command]
@@ -558,6 +599,7 @@ pub fn run() {
         .manage(TrayAvailable(AtomicBool::new(false)))
         .manage(full_process_list)
         .manage(UpdaterConfigured(updater_configured))
+        .manage(updates::UpdateManager::new(env!("CARGO_PKG_VERSION").to_string()))
         .invoke_handler(tauri::generate_handler![
             get_metrics,
             get_platform_info,
@@ -567,6 +609,10 @@ pub fn run() {
             set_csv_logging,
             set_alert_config,
             send_test_notification,
+            update_status,
+            update_check,
+            update_install,
+            set_update_prefs,
             set_full_process_list,
             set_refresh_interval,
             hide_to_tray,
@@ -589,7 +635,7 @@ pub fn run() {
                 }
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             match build_tray(app.handle()) {
                 Ok(()) => app.state::<TrayAvailable>().0.store(true, Ordering::Relaxed),
                 Err(e) => eprintln!("system tray unavailable, close will quit instead of hiding: {e}"),
@@ -623,6 +669,9 @@ pub fn run() {
                     menubar_interval: menubar_interval_for_loop,
                 },
             );
+            if updater_configured {
+                updates::start_loop(app.handle().clone());
+            }
             Ok(())
         })
         .build(context)
@@ -630,9 +679,7 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 // Keep the last minute of history across restarts.
-                if let Some(h) = app.try_state::<HistoryState>() {
-                    lock(&h).save_if_dirty();
-                }
+                save_history_now(app);
             }
         });
 }

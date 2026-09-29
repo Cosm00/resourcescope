@@ -98,10 +98,17 @@ export default function App() {
     )
   }, [alertConfig])
 
+  // Updates: the backend checks/downloads on its own schedule when in-app
+  // updates are configured; otherwise the store does a daily GitHub check.
   const autoCheckUpdates = useSettingsStore(s => s.autoCheckUpdates)
+  const autoDownloadUpdates = useSettingsStore(s => s.autoDownloadUpdates)
   useEffect(() => {
-    if (autoCheckUpdates) useUpdateStore.getState().maybeAutoCheck()
-  }, [autoCheckUpdates])
+    invoke('set_update_prefs', { autoCheck: autoCheckUpdates, autoDownload: autoDownloadUpdates }).catch(() => {})
+    const store = useUpdateStore.getState()
+    store.init().then(() => {
+      if (autoCheckUpdates) store.maybeAutoCheck()
+    })
+  }, [autoCheckUpdates, autoDownloadUpdates])
 
   // Theme: System follows the OS (live); the native title bar follows too.
   const themePref = useSettingsStore(s => s.theme)

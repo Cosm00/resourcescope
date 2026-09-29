@@ -7,7 +7,7 @@ pipeline signs updater bundles:
 | Setup | What users get |
 |-------|----------------|
 | No signing key (default) | "Download x.y.z" button that opens the GitHub release page. Uses the public GitHub Releases API; nothing to configure. |
-| Signing key configured | "Install x.y.z & restart": the app downloads the signed bundle for its platform, verifies the signature, installs, and relaunches. |
+| Signing key configured | **Automatic updates.** The app checks shortly after launch and every 6 hours (even while hidden in the tray), downloads the new version in the background, verifies its signature, and shows a notification plus a **Restart to update** button. The update installs on that restart. Users can turn off automatic checking or downloading in Settings → About. |
 
 ## Enabling one-click updates
 
@@ -50,3 +50,13 @@ Tauri's updater only installs bundles signed with your private key. Do this once
 
 > Losing the private key means existing installs can no longer verify
 > updates. Back it up somewhere safe (e.g. a password manager).
+
+## Notes
+
+- Only builds that ship with the public key can update themselves. Installs of
+  earlier versions see the "Download x.y.z" link once, then update
+  automatically from the next version onward.
+- Linux: AppImage, .deb and .rpm installs update in place. macOS updates need
+  the release to be notarized (see the Apple secrets in the release workflow).
+- The app never restarts on its own; the update applies when the user clicks
+  **Restart to update** (or next time they launch it).
