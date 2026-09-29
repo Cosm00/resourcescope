@@ -121,8 +121,10 @@ export default function ProcessesPanel() {
   const actionLabels = processActionLabels(usePlatformStore(p => p.info?.os))
 
   const [view, setView] = useState<ViewMode>('apps')
-  const [sortKey, setSortKey] = useState<SortKey>('cpu_pct')
+  const [pickedSortKey, setSortKey] = useState<SortKey>('cpu_pct')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  // Don't keep sorting by a column that's no longer shown.
+  const sortKey: SortKey = pickedSortKey === 'net' && !showNet ? 'cpu_pct' : pickedSortKey
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [pickedSelection, setSelection] = useState<Selection>(null)

@@ -22,9 +22,10 @@ pub enum EngineCounter {
     /// `drm-engine-capacity-<name>: <n>` when an engine class has several
     /// instances.
     Ns { busy_ns: u64, capacity: u32 },
-    /// xe: `drm-cycles-<class>` against `drm-total-cycles-<class>` (the GPU
-    /// timestamp), so wall-clock time doesn't matter.
-    Cycles { cycles: u64, total: u64 },
+    /// xe: `drm-cycles-<class>` (summed over the class's instances) against
+    /// `drm-total-cycles-<class>` (the GPU timestamp), so wall-clock time
+    /// doesn't matter.
+    Cycles { cycles: u64, total: u64, capacity: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,7 +86,8 @@ pub fn parse_fdinfo(text: &str) -> Option<DrmClient> {
         .collect();
     for (class, cycles) in cycles {
         if let Some(&total) = total.get(&class) {
-            engines.insert(class, EngineCounter::Cycles { cycles, total });
+            let capacity = capacity.get(&class).copied().unwrap_or(1);
+            engines.insert(class, EngineCounter::Cycles { cycles, total, capacity });
         }
     }
     if engines.is_empty() {
@@ -107,9 +109,9 @@ pub fn fdinfo_utilization(
     if elapsed_ns == 0 {
         return None;
     }
-    // Per engine: (summed busy ns, capacity) or (summed cycles, GPU timestamp delta).
+    // Per engine: (summed busy ns, capacity) or (summed cycles, GPU timestamp delta, capacity).
     let mut ns: HashMap<&str, (u64, u32)> = HashMap::new();
-    let mut cyc: HashMap<&str, (u64, u64)> = HashMap::new();
+    let mut cyc: HashMap<&str, (u64, u64, u32)> = HashMap::new();
     let mut seen = false;
     for (key, client) in cur {
         if client.pdev != pdev {
@@ -124,11 +126,15 @@ pub fn fdinfo_utilization(
                     e.0 += busy_ns.saturating_sub(*b);
                     e.1 = e.1.max(*capacity);
                 }
-                (EngineCounter::Cycles { cycles, total }, Some(EngineCounter::Cycles { cycles: c, total: t })) => {
-                    let e = cyc.entry(engine.as_str()).or_insert((0, 0));
+                (
+                    EngineCounter::Cycles { cycles, total, capacity },
+                    Some(EngineCounter::Cycles { cycles: c, total: t, .. }),
+                ) => {
+                    let e = cyc.entry(engine.as_str()).or_insert((0, 0, *capacity));
                     e.0 += cycles.saturating_sub(*c);
                     // Every client of a GT reads the same timestamp.
                     e.1 = e.1.max(total.saturating_sub(*t));
+                    e.2 = e.2.max(*capacity);
                 }
                 _ => {}
             }
@@ -142,8 +148,8 @@ pub fn fdinfo_utilization(
         .map(|&(busy, cap)| busy as f64 / (elapsed_ns as f64 * cap.max(1) as f64));
     let from_cycles = cyc
         .values()
-        .filter(|&&(_, total)| total > 0)
-        .map(|&(cycles, total)| cycles as f64 / total as f64);
+        .filter(|&&(_, total, _)| total > 0)
+        .map(|&(cycles, total, cap)| cycles as f64 / (total as f64 * cap.max(1) as f64));
     let busiest = from_ns.chain(from_cycles).fold(0.0f64, f64::max);
     Some((busiest * 100.0).clamp(0.0, 100.0) as f32)
 }
@@ -184,7 +190,7 @@ mod linux {
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::path::Path;
     use std::sync::Mutex;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     type ClientMap = HashMap<(String, u64), DrmClient>;
 
@@ -193,10 +199,21 @@ mod linux {
         Unavailable,
     }
 
+    /// Shorter windows than this are mostly noise (and happen when the static
+    /// probe and the first live sample run back to back): keep the baseline
+    /// and report the previous value instead.
+    const MIN_WINDOW: Duration = Duration::from_millis(250);
+    /// One /proc scan serves every GPU sampled in the same tick.
+    const SCAN_REUSE: Duration = Duration::from_millis(200);
+
     #[derive(Default)]
     struct State {
         pmu: HashMap<String, Pmu>,
-        fdinfo_last: Option<(Instant, ClientMap)>,
+        /// Latest fdinfo scan, shared by all GPUs.
+        scan: Option<(Instant, std::sync::Arc<ClientMap>)>,
+        /// Per GPU: the scan its last reading was measured against.
+        fdinfo_baseline: HashMap<String, (Instant, std::sync::Arc<ClientMap>)>,
+        last_pct: HashMap<String, (f32, &'static str)>,
     }
 
     static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -208,31 +225,56 @@ mod linux {
         let mut guard = STATE.lock().unwrap_or_else(|p| p.into_inner());
         let state = guard.get_or_insert_with(State::default);
         let pci = pci.to_ascii_lowercase();
+        let now = Instant::now();
 
         if driver == "i915" {
             let pmu = state.pmu.entry(pci.clone()).or_insert_with(|| open_pmu(&pci));
             if let Pmu::Ready { counters, last } = pmu {
+                if let Some((t, _)) = last {
+                    if now.duration_since(*t) < MIN_WINDOW {
+                        return state.last_pct.get(&pci).copied();
+                    }
+                }
                 if let Some(values) = read_counters(counters) {
-                    let now = Instant::now();
                     let result = last.as_ref().and_then(|(t, prev)| {
                         pmu_utilization(prev, &values, now.duration_since(*t).as_nanos() as u64)
                     });
                     *last = Some((now, values));
                     // With a working PMU, skip the (costlier) fdinfo scan even
                     // on the first, baseline-only call.
-                    return result.map(|pct| (pct, "i915 PMU"));
+                    let result = result.map(|pct| (pct, "i915 PMU"));
+                    if let Some(r) = result {
+                        state.last_pct.insert(pci, r);
+                    }
+                    return result;
                 }
                 *pmu = Pmu::Unavailable;
             }
         }
 
-        let now = Instant::now();
-        let clients = scan_fdinfo();
-        let result = state.fdinfo_last.as_ref().and_then(|(t, prev)| {
-            fdinfo_utilization(prev, &clients, &pci, now.duration_since(*t).as_nanos() as u64)
+        if let Some((t, _)) = state.fdinfo_baseline.get(&pci) {
+            if now.duration_since(*t) < MIN_WINDOW {
+                return state.last_pct.get(&pci).copied();
+            }
+        }
+        let clients = match &state.scan {
+            Some((t, clients)) if now.duration_since(*t) < SCAN_REUSE => clients.clone(),
+            _ => {
+                let fresh = std::sync::Arc::new(scan_fdinfo());
+                state.scan = Some((now, fresh.clone()));
+                fresh
+            }
+        };
+        let taken = state.scan.as_ref().map(|(t, _)| *t).unwrap_or(now);
+        let result = state.fdinfo_baseline.get(&pci).and_then(|(t, prev)| {
+            fdinfo_utilization(prev, &clients, &pci, taken.duration_since(*t).as_nanos() as u64)
         });
-        state.fdinfo_last = Some((now, clients));
-        result.map(|pct| (pct, "DRM fdinfo"))
+        state.fdinfo_baseline.insert(pci.clone(), (taken, clients));
+        let result = result.map(|pct| (pct, "DRM fdinfo"));
+        if let Some(r) = result {
+            state.last_pct.insert(pci, r);
+        }
+        result
     }
 
     /// The i915 PMU of a device: `i915_0000_03_00.0` for discrete cards and
@@ -366,7 +408,7 @@ mod tests {
 
     const I915: &str = "pos:\t0\nflags:\t02100002\nmnt_id:\t26\nino:\t1023\ndrm-driver:\ti915\ndrm-client-id:\t7\ndrm-pdev:\t0000:00:02.0\ndrm-total-system0:\t1024 KiB\ndrm-engine-render:\t2000000 ns\ndrm-engine-copy:\t0 ns\ndrm-engine-video:\t500000 ns\ndrm-engine-capacity-video:\t2\ndrm-engine-video-enhance:\t0 ns\n";
 
-    const XE: &str = "drm-driver:\txe\ndrm-client-id:\t12\ndrm-pdev:\t0000:03:00.0\ndrm-total-system:\t0\ndrm-cycles-rcs:\t1000\ndrm-total-cycles-rcs:\t100000\ndrm-cycles-bcs:\t0\ndrm-total-cycles-bcs:\t100000\n";
+    const XE: &str = "drm-driver:\txe\ndrm-client-id:\t12\ndrm-pdev:\t0000:03:00.0\ndrm-total-system:\t0\ndrm-cycles-rcs:\t1000\ndrm-total-cycles-rcs:\t100000\ndrm-cycles-bcs:\t0\ndrm-total-cycles-bcs:\t100000\ndrm-cycles-vcs:\t0\ndrm-total-cycles-vcs:\t100000\ndrm-engine-capacity-vcs:\t2\n";
 
     fn map(clients: &[DrmClient]) -> HashMap<(String, u64), DrmClient> {
         clients.iter().map(|c| ((c.pdev.clone(), c.client_id), c.clone())).collect()
@@ -388,7 +430,8 @@ mod tests {
     fn parses_xe_fdinfo() {
         let c = parse_fdinfo(XE).unwrap();
         assert_eq!(c.driver, "xe");
-        assert_eq!(c.engines["rcs"], EngineCounter::Cycles { cycles: 1000, total: 100_000 });
+        assert_eq!(c.engines["rcs"], EngineCounter::Cycles { cycles: 1000, total: 100_000, capacity: 1 });
+        assert_eq!(c.engines["vcs"], EngineCounter::Cycles { cycles: 0, total: 100_000, capacity: 2 });
     }
 
     #[test]
@@ -419,7 +462,12 @@ mod tests {
     fn cycles_utilization_uses_gpu_timestamp() {
         let c0 = parse_fdinfo(XE).unwrap();
         let mut c1 = c0.clone();
-        c1.engines.insert("rcs".into(), EngineCounter::Cycles { cycles: 1000 + 25_000, total: 100_000 + 100_000 });
+        c1.engines.insert("rcs".into(), EngineCounter::Cycles { cycles: 1000 + 25_000, total: 100_000 + 100_000, capacity: 1 });
+        // Both video engines fully busy for half the window → 50%, not 100%.
+        c1.engines.insert("vcs".into(), EngineCounter::Cycles { cycles: 100_000, total: 200_000, capacity: 2 });
+        let pct = fdinfo_utilization(&map(std::slice::from_ref(&c0)), &map(std::slice::from_ref(&c1)), "0000:03:00.0", 1).unwrap();
+        assert!((pct - 50.0).abs() < 0.01, "{pct}");
+        c1.engines.insert("vcs".into(), EngineCounter::Cycles { cycles: 0, total: 200_000, capacity: 2 });
         let pct = fdinfo_utilization(&map(&[c0]), &map(&[c1]), "0000:03:00.0", 1).unwrap();
         assert!((pct - 25.0).abs() < 0.01, "{pct}");
     }

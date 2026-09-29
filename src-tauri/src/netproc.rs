@@ -61,7 +61,7 @@ impl NetProcCollector {
 /// Release OS resources that outlive the process (the Windows ETW session).
 pub fn shutdown() {
     #[cfg(windows)]
-    platform::stop_session();
+    platform::shutdown();
 }
 
 /// Turn cumulative per-key byte counters into per-PID rates.
@@ -121,11 +121,20 @@ pub struct DiagSocket {
     pub tx: u64,
 }
 
+/// How a buffer of a sock_diag dump ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DumpEnd {
+    /// More messages follow in the next `recv`.
+    More,
+    Done,
+    /// The kernel aborted the dump (`NLMSG_ERROR`); the data is partial.
+    Error,
+}
+
 /// Parse a buffer of netlink messages from a `SOCK_DIAG_BY_FAMILY` dump.
-/// Returns the sockets and whether `NLMSG_DONE` (or an error) ended the dump.
 /// Loopback sockets and sockets without an inode (TIME_WAIT) are skipped.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn parse_diag_dump(buf: &[u8]) -> (Vec<DiagSocket>, bool) {
+pub fn parse_diag_dump(buf: &[u8]) -> (Vec<DiagSocket>, DumpEnd) {
     let u16_at = |b: &[u8], o: usize| u16::from_ne_bytes([b[o], b[o + 1]]);
     let u32_at = |b: &[u8], o: usize| u32::from_ne_bytes(b[o..o + 4].try_into().unwrap());
     let u64_at = |b: &[u8], o: usize| u64::from_ne_bytes(b[o..o + 8].try_into().unwrap());
@@ -139,8 +148,11 @@ pub fn parse_diag_dump(buf: &[u8]) -> (Vec<DiagSocket>, bool) {
         if len < 16 || off + len > buf.len() {
             break;
         }
-        if kind == NLMSG_DONE || kind == NLMSG_ERROR {
-            return (sockets, true);
+        if kind == NLMSG_DONE {
+            return (sockets, DumpEnd::Done);
+        }
+        if kind == NLMSG_ERROR {
+            return (sockets, DumpEnd::Error);
         }
         // struct inet_diag_msg (72 bytes) follows the 16-byte header.
         let msg = &buf[off + 16..off + len];
@@ -173,7 +185,7 @@ pub fn parse_diag_dump(buf: &[u8]) -> (Vec<DiagSocket>, bool) {
         }
         off += align4(len);
     }
-    (sockets, false)
+    (sockets, DumpEnd::More)
 }
 
 /// Parse `/proc/<pid>/fd/<n>` link targets like `socket:[12345]`.
@@ -195,20 +207,27 @@ mod platform {
         /// Active sockets a scan couldn't attribute (other users' processes
         /// without root); they don't trigger another scan.
         unowned: std::collections::HashSet<u32>,
-        working: bool,
+        last_scan: Option<Instant>,
+        /// Consecutive failed dumps; one hiccup (EINTR, timeout) shouldn't
+        /// make the UI drop the Network column.
+        failures: u32,
     }
+
+    /// New sockets appear constantly (browsers); cap the /proc walk rate.
+    const MIN_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
     impl Collector {
         pub fn new() -> Self {
-            Self { prev: None, owners: HashMap::new(), unowned: Default::default(), working: true }
+            Self { prev: None, owners: HashMap::new(), unowned: Default::default(), last_scan: None, failures: 0 }
         }
 
         pub fn sample(&mut self) -> HashMap<u32, NetRate> {
             let Some(sockets) = dump_tcp() else {
-                self.working = false;
+                // Keep the previous baseline for the next successful dump.
+                self.failures += 1;
                 return HashMap::new();
             };
-            self.working = true;
+            self.failures = 0;
             let now = Instant::now();
             let cur: HashMap<u32, (u64, u64)> = sockets.into_iter().map(|s| (s.inode, (s.rx, s.tx))).collect();
             let rates = match &self.prev {
@@ -223,8 +242,10 @@ mod platform {
                         })
                         .map(|(inode, _)| *inode)
                         .collect();
-                    if !unknown.is_empty() {
+                    let may_scan = self.last_scan.is_none_or(|t| now.duration_since(t) >= MIN_SCAN_INTERVAL);
+                    if !unknown.is_empty() && may_scan {
                         self.owners = scan_socket_owners();
+                        self.last_scan = Some(now);
                         self.unowned.extend(unknown.into_iter().filter(|i| !self.owners.contains_key(i)));
                     }
                     let owners = &self.owners;
@@ -241,10 +262,11 @@ mod platform {
 
         pub fn status(&self) -> ProcNetStatus {
             let root = unsafe { libc::geteuid() } == 0;
+            let working = self.failures < 3;
             ProcNetStatus {
-                available: self.working,
+                available: working,
                 scope: "TCP".to_string(),
-                note: Some(if !self.working {
+                note: Some(if !working {
                     "The kernel's socket diagnostics interface (sock_diag) is unavailable.".to_string()
                 } else if root {
                     "TCP traffic per process from the kernel's socket statistics; UDP (e.g. QUIC, DNS, games) isn't counted.".to_string()
@@ -293,7 +315,19 @@ mod platform {
         req[16] = family;
         req[17] = libc::IPPROTO_TCP as u8;
         req[18] = 1 << (INET_DIAG_INFO - 1);
-        req[20..24].copy_from_slice(&u32::MAX.to_ne_bytes()); // every TCP state
+        // Only states that move data; LISTEN / TIME_WAIT / SYN_RECV sockets
+        // (tens of thousands on a busy server) carry nothing useful.
+        const TCP_ESTABLISHED: u32 = 1;
+        const TCP_SYN_SENT: u32 = 2;
+        const TCP_FIN_WAIT1: u32 = 4;
+        const TCP_FIN_WAIT2: u32 = 5;
+        const TCP_CLOSE_WAIT: u32 = 8;
+        const TCP_LAST_ACK: u32 = 9;
+        const TCP_CLOSING: u32 = 11;
+        let states = [TCP_ESTABLISHED, TCP_SYN_SENT, TCP_FIN_WAIT1, TCP_FIN_WAIT2, TCP_CLOSE_WAIT, TCP_LAST_ACK, TCP_CLOSING]
+            .iter()
+            .fold(0u32, |mask, state| mask | (1 << state));
+        req[20..24].copy_from_slice(&states.to_ne_bytes());
 
         let mut kernel: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
         kernel.nl_family = libc::AF_NETLINK as u16;
@@ -310,10 +344,12 @@ mod platform {
             if n <= 0 {
                 return None;
             }
-            let (batch, done) = parse_diag_dump(&buf[..n as usize]);
+            let (batch, end) = parse_diag_dump(&buf[..n as usize]);
             sockets.extend(batch);
-            if done {
-                return Some(sockets);
+            match end {
+                DumpEnd::More => {}
+                DumpEnd::Done => return Some(sockets),
+                DumpEnd::Error => return None,
             }
         }
     }
@@ -456,10 +492,14 @@ mod platform {
                     s.updated = Some(Instant::now());
                     s.failed = false;
                 }
-                None if !args.is_empty() => args.clear(),
                 None => {
                     failures += 1;
-                    if failures >= 3 {
+                    // A macOS without `-t external` fails every time; a
+                    // transient failure shouldn't cost us the loopback filter.
+                    if failures >= 3 && !args.is_empty() {
+                        args.clear();
+                        failures = 0;
+                    } else if failures >= 3 {
                         shared.lock().unwrap_or_else(|p| p.into_inner()).failed = true;
                         // Keep trying, slowly: nettop can fail transiently.
                         std::thread::sleep(Duration::from_secs(60));
@@ -545,10 +585,15 @@ mod platform {
     /// Cumulative (rx, tx) bytes per PID since the session started. Written
     /// by the ETW callback thread.
     static TOTALS: Mutex<Option<HashMap<u32, (u64, u64)>>> = Mutex::new(None);
+    /// Cleared when the consumer thread's ProcessTrace returns, i.e. the
+    /// session was stopped (by another ResourceScope instance, or an admin).
+    static CONSUMER_ALIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
     enum State {
         Running,
         NeedsAdmin,
+        /// The session ended underneath us.
+        Stopped,
         Failed(String),
     }
 
@@ -559,6 +604,11 @@ mod platform {
 
     impl Collector {
         pub fn new() -> Self {
+            // Unit tests (CI runs them as administrator) must not start or
+            // steal a machine-wide trace session.
+            if cfg!(test) {
+                return Self { state: State::Failed("disabled in tests".into()), prev: None };
+            }
             let state = match start_session() {
                 Ok(()) => State::Running,
                 Err(e) if e == ERROR_ACCESS_DENIED => State::NeedsAdmin,
@@ -569,6 +619,10 @@ mod platform {
 
         pub fn sample(&mut self) -> HashMap<u32, NetRate> {
             if !matches!(self.state, State::Running) {
+                return HashMap::new();
+            }
+            if !CONSUMER_ALIVE.load(std::sync::atomic::Ordering::Acquire) {
+                self.state = State::Stopped;
                 return HashMap::new();
             }
             let cur = TOTALS.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
@@ -593,6 +647,11 @@ mod platform {
                     scope: String::new(),
                     note: Some("Windows only reports per-process network traffic to administrators. Run ResourceScope as administrator to see it.".to_string()),
                 },
+                State::Stopped => ProcNetStatus {
+                    available: false,
+                    scope: String::new(),
+                    note: Some("The Windows network event session was stopped (another ResourceScope window may have taken it over). Restart ResourceScope to see per-process network traffic again.".to_string()),
+                },
                 State::Failed(e) => ProcNetStatus {
                     available: false,
                     scope: String::new(),
@@ -605,7 +664,7 @@ mod platform {
     impl Drop for Collector {
         fn drop(&mut self) {
             if matches!(self.state, State::Running) {
-                stop_session();
+                shutdown();
             }
         }
     }
@@ -631,7 +690,15 @@ mod platform {
         buf
     }
 
-    pub fn stop_session() {
+    /// Stop our session on exit — only if this instance is the one running
+    /// it, so a second instance quitting doesn't kill the first one's.
+    pub fn shutdown() {
+        if CONSUMER_ALIVE.load(std::sync::atomic::Ordering::Acquire) {
+            stop_session();
+        }
+    }
+
+    fn stop_session() {
         let mut buf = properties_buffer();
         let name = wide(SESSION_NAME);
         unsafe {
@@ -671,6 +738,7 @@ mod platform {
         }
         *TOTALS.lock().unwrap_or_else(|p| p.into_inner()) = Some(HashMap::new());
 
+        CONSUMER_ALIVE.store(true, std::sync::atomic::Ordering::Release);
         std::thread::Builder::new()
             .name("etw-network".into())
             .spawn(move || {
@@ -681,10 +749,12 @@ mod platform {
                 unsafe {
                     let trace = OpenTraceW(&mut logfile);
                     if trace.Value == u64::MAX {
+                        CONSUMER_ALIVE.store(false, std::sync::atomic::Ordering::Release);
                         return;
                     }
                     // Blocks until the session stops.
                     let _ = ProcessTrace(&[trace], None, None);
+                    CONSUMER_ALIVE.store(false, std::sync::atomic::Ordering::Release);
                     let _ = CloseTrace(trace);
                 }
             })
@@ -764,14 +834,16 @@ mod tests {
         buf.extend(diag_message(AF_INET6, &std::net::Ipv6Addr::LOCALHOST.octets(), 1003, 5, 5)); // loopback
         buf.extend(diag_message(AF_INET6, &"2606:4700::1".parse::<std::net::Ipv6Addr>().unwrap().octets(), 1004, 1, 2));
         buf.extend(diag_message(AF_INET, &[1, 1, 1, 1], 0, 1, 1)); // TIME_WAIT: no inode
-        let (sockets, done) = parse_diag_dump(&buf);
-        assert!(!done);
+        let (sockets, end) = parse_diag_dump(&buf);
+        assert_eq!(end, DumpEnd::More);
         assert_eq!(sockets, vec![DiagSocket { inode: 1001, rx: 9000, tx: 500 }, DiagSocket { inode: 1004, rx: 2, tx: 1 }]);
 
         let mut done_msg = vec![0u8; 20];
         done_msg[0..4].copy_from_slice(&20u32.to_ne_bytes());
         done_msg[4..6].copy_from_slice(&NLMSG_DONE.to_ne_bytes());
-        assert!(parse_diag_dump(&done_msg).1);
+        assert_eq!(parse_diag_dump(&done_msg).1, DumpEnd::Done);
+        done_msg[4..6].copy_from_slice(&NLMSG_ERROR.to_ne_bytes());
+        assert_eq!(parse_diag_dump(&done_msg).1, DumpEnd::Error);
     }
 
     #[test]

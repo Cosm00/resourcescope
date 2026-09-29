@@ -105,13 +105,34 @@ mod platform {
     #[derive(Debug)]
     pub(super) struct Accelerator {
         pub class: String,
+        /// IORegistry entry id (`id 0x100000a2c`), stable while the GPU is attached.
+        pub id: String,
         pub dump: String,
+    }
+
+    /// Registry ids in `adapter_index` order, so live samples keep their GPU's
+    /// identity when the list changes (eGPU plugged / unplugged).
+    static KNOWN_IDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    fn adapter_index_for(id: &str, fallback: usize) -> u32 {
+        let mut known = KNOWN_IDS.lock().unwrap_or_else(|p| p.into_inner());
+        if id.is_empty() {
+            return fallback as u32;
+        }
+        match known.iter().position(|k| k == id) {
+            Some(i) => i as u32,
+            None => {
+                known.push(id.to_string());
+                (known.len() - 1) as u32
+            }
+        }
     }
 
     /// Every GPU on the machine: Apple silicon has one, Intel Macs can have an
     /// integrated Intel GPU plus a discrete AMD/NVIDIA one (or an eGPU).
     pub fn collect_static_all() -> Vec<GpuInfo> {
         let accels = accelerators();
+        KNOWN_IDS.lock().unwrap_or_else(|p| p.into_inner()).clear();
         let profiler = collect_system_profiler_gpus();
         let mut used = vec![false; profiler.len()];
         accels
@@ -127,7 +148,7 @@ mod platform {
                 if let Some(j) = pick {
                     used[j] = true;
                 }
-                static_info(accel, pick.map(|j| &profiler[j]), i as u32)
+                static_info(accel, pick.map(|j| &profiler[j]), adapter_index_for(&accel.id, i))
             })
             .collect()
     }
@@ -141,11 +162,12 @@ mod platform {
             .iter()
             .enumerate()
             .map(|(i, accel)| {
+                let index = adapter_index_for(&accel.id, i);
                 let mut info = base
                     .iter()
-                    .find(|b| b.adapter_index == Some(i as u32))
+                    .find(|b| b.adapter_index == Some(index))
                     .cloned()
-                    .unwrap_or_else(|| static_info(accel, None, i as u32));
+                    .unwrap_or_else(|| static_info(accel, None, index));
                 apply_dynamic(&mut info, accel, power_metrics.as_ref());
                 info
             })
@@ -280,7 +302,7 @@ mod platform {
         if accels.is_empty() {
             // Older approach by node name, in case class matching finds nothing.
             if let Some((class, dump)) = find_gpu_ioreg_dump() {
-                accels.push(Accelerator { class, dump });
+                accels.push(Accelerator { class, id: String::new(), dump });
             }
         }
         accels.sort_by_key(|a| accelerator_vendor(a) == "Intel");
@@ -298,7 +320,13 @@ mod platform {
                     .unwrap_or_else(|| header.split_whitespace().next().unwrap_or(""))
                     .trim()
                     .to_string();
-                nodes.push(Accelerator { class, dump: String::new() });
+                let id = header
+                    .split_once(", id ")
+                    .and_then(|(_, rest)| rest.split([',', '>']).next())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                nodes.push(Accelerator { class, id, dump: String::new() });
             } else if let Some(node) = nodes.last_mut() {
                 node.dump.push_str(line);
                 node.dump.push('\n');
@@ -1476,6 +1504,8 @@ mod tests {
         let nodes = split_ioreg_nodes(ioreg);
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].class, "AMDRadeonX5000_AMDNavi14GraphicsAccelerator");
+        assert_eq!(nodes[0].id, "0x100000a2c");
+        assert_eq!(nodes[1].id, "0x100000a30");
         assert!(nodes[0].dump.contains("GPU Activity"));
         assert!(!nodes[0].dump.contains("IntelAccelerator"));
         assert_eq!(accelerator_vendor(&nodes[0]), "AMD");
