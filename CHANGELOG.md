@@ -1,3 +1,11 @@
+## [Unreleased]
+
+### Added
+- **Automatic updates** (once a signing key is configured): background checks every 6 hours, silent signature-verified downloads, a notification and a "Restart to update" button. Settings toggles for automatic checking and downloading.
+
+### Fixed
+- Release workflow validates the Apple notarization key up front and accepts keys pasted with literal `\n`, instead of failing late with `invalidPEMDocument`.
+
 ## [1.2.0] - 2026-09-24
 
 ### Added

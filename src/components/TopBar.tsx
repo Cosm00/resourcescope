@@ -11,7 +11,10 @@ export default function TopBar({ onNavigate }: { onNavigate?: (id: string) => vo
   const health = useMetricsStore(s => s.health)
   const trayAvailable = usePlatformStore(s => s.info?.tray_available ?? false)
   const battery = useMetricsStore(s => s.snapshot?.batteries[0] ?? null)
-  const updateAvailable = useUpdateStore(s => (s.status === 'available' ? s.latest : null))
+  const updateStatus = useUpdateStore(s => s.status)
+  const updateVersion = useUpdateStore(s => s.latest)
+  const installUpdate = useUpdateStore(s => s.install)
+  const updateAvailable = updateStatus === 'available' ? updateVersion : null
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
@@ -65,6 +68,13 @@ export default function TopBar({ onNavigate }: { onNavigate?: (id: string) => vo
 
       {/* Right */}
       <div className="flex items-center gap-3">
+        {updateStatus === 'ready' && (
+          <button type="button" onClick={installUpdate} className="h-7 px-2.5 rounded-full text-[11px] font-semibold"
+            style={{ background: 'var(--accent-green-soft)', color: 'var(--accent-green)', border: '1px solid var(--accent-green-soft)' }}
+            title={`ResourceScope ${updateVersion} is downloaded`}>
+            Restart to update
+          </button>
+        )}
         {updateAvailable && (
           <button type="button" onClick={() => onNavigate?.('settings')} className="h-7 px-2.5 rounded-full text-[11px] font-semibold"
             style={{ background: 'rgba(79,156,249,0.14)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.25)' }}
