@@ -1,3 +1,17 @@
+## [1.3.0] - 2026-09-29
+
+### Added
+- **Per-process network usage:** a Network column in the Processes tab (sortable, summed per app), network in/out in process details, and "Top Network Processes" on the Network tab. Linux counts TCP from the kernel's socket statistics (your own processes without root); macOS uses `nettop` (TCP + UDP); Windows uses kernel network events (ETW), which Windows only allows for administrators — otherwise the UI says so. Loopback traffic is excluded everywhere.
+- **GPU temperatures on Windows for AMD and Intel** (and NVIDIA without `nvidia-smi`), from the driver-reported adapter performance data that Task Manager shows (WDDM 2.4+ drivers).
+- **Intel GPU utilization on Linux** (i915 and xe): from the i915 PMU when permitted (root / `perf_event_paranoid`), otherwise from DRM fdinfo engine counters (Linux 5.19+ for i915, 6.8+ for xe).
+- **macOS multi-GPU:** every IOAccelerator is listed (integrated Intel + discrete AMD/NVIDIA on Intel Macs, eGPUs), with AMD temperature and core clock where the driver reports them.
+- **Per-core CPU temperatures:** a Core Temperatures card on the CPU tab — Intel cores and AMD CCDs on Linux, P-/E-core cluster sensors on Apple silicon, and per-core SMC sensors on Intel Macs. No root or `powermetrics` needed.
+
+### Fixed
+- Releases are published automatically once every platform has built, instead of staying drafts (nothing after 1.1.6 was public, and in-app updates only see published releases). A manual run can also publish an existing draft.
+- macOS no longer spawns a doomed `powermetrics` every few seconds when it isn't running as root and no helper is installed.
+- macOS GPU vendor detection no longer calls every GPU "Apple" when system_profiler has no match.
+
 ## [1.2.1] - 2026-09-29
 
 ### Added

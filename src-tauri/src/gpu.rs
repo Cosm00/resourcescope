@@ -72,15 +72,7 @@ mod platform {
     use super::GpuInfo;
     use std::process::Command;
 
-    #[derive(Default)]
-    struct SystemProfilerGpuInfo {
-        name: Option<String>,
-        vendor: Option<String>,
-        core_count: Option<usize>,
-        notes: Option<String>,
-    }
-
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct PowerMetricsGpuInfo {
         active_residency_pct: Option<f32>,
         frequency_mhz: Option<u64>,
@@ -100,188 +92,287 @@ mod platform {
         "AppleCLCD2",
     ];
 
-    pub fn collect_static_info() -> Option<GpuInfo> {
-        let profiler = collect_system_profiler_info();
-        let (class_name, output) = find_gpu_ioreg_dump()?;
-        let io_compat = extract_braced_object(&output, "IOCompatibilityProperties");
-        let ioreg_vendor = infer_vendor(&output);
-        let vendor = profiler.vendor.clone().unwrap_or(ioreg_vendor);
-        let name = profiler.name.clone()
-            .or_else(|| extract_quoted_value(&output, "model"))
-            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "MetalPluginName")))
-            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "IOGLBundleName")))
-            .or_else(|| extract_quoted_value(&output, "CFBundleName"))
-            .or_else(|| infer_name_from_class(&class_name, &vendor))
-            .unwrap_or_else(|| format!("{} GPU", vendor));
-        let core_count = profiler.core_count.or_else(|| {
-            extract_u64_value(&output, "gpu-core-count")
-                .or_else(|| extract_u64_value(&output, "num_cores"))
-                .map(|v| v as usize)
-        });
-        let memory_total_bytes = extract_u64_value(&output, "recommendedMaxWorkingSetSize")
-            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
-
-        Some(GpuInfo {
-            platform: "macOS".to_string(),
-            name,
-            vendor,
-            core_count,
-            utilization_pct: None,
-            renderer_utilization_pct: None,
-            tiler_utilization_pct: None,
-            memory_used_bytes: None,
-            memory_allocated_bytes: None,
-            memory_driver_bytes: None,
-            memory_total_bytes,
-            temperature_c: None,
-            power_state: extract_nested_u64_value(&output, "IOPowerManagement", "CurrentPowerState"),
-            frequency_mhz: None,
-            last_submission_pid: None,
-            adapter_index: Some(0),
-            backend: "macos-ioreg".to_string(),
-            support_level: if output.contains("PerformanceStatistics") {
-                "full".to_string()
-            } else {
-                "partial".to_string()
-            },
-            notes: Some(match profiler.notes {
-                Some(extra) => format!("{extra} IORegistry node discovered via class {class_name}."),
-                None => format!("Discovered GPU IORegistry node via class {class_name}."),
-            }),
-            collection_method: format!("ioreg -r -n {class_name} -l"),
-        })
+    /// One GPU as `system_profiler SPDisplaysDataType` describes it.
+    #[derive(Default, Clone, Debug, PartialEq)]
+    pub(super) struct ProfilerGpu {
+        pub name: Option<String>,
+        pub vendor: Option<String>,
+        pub core_count: Option<usize>,
+        pub vram_bytes: Option<u64>,
     }
 
-    pub fn collect_dynamic_info(base: Option<&GpuInfo>) -> Option<GpuInfo> {
-        let (class_name, output) = find_gpu_ioreg_dump()?;
-        let io_compat = extract_braced_object(&output, "IOCompatibilityProperties");
-        let mut info = base.cloned().unwrap_or_else(|| GpuInfo {
-            platform: "macOS".to_string(),
-            name: infer_name_from_class(&class_name, &infer_vendor(&output)).unwrap_or_else(|| "Apple GPU".to_string()),
-            vendor: infer_vendor(&output),
-            core_count: extract_u64_value(&output, "gpu-core-count").map(|v| v as usize),
-            utilization_pct: None,
-            renderer_utilization_pct: None,
-            tiler_utilization_pct: None,
-            memory_used_bytes: None,
-            memory_allocated_bytes: None,
-            memory_driver_bytes: None,
-            memory_total_bytes: extract_u64_value(&output, "recommendedMaxWorkingSetSize")
-                .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024)),
-            temperature_c: None,
-            power_state: None,
-            frequency_mhz: None,
-            last_submission_pid: None,
-            adapter_index: Some(0),
-            backend: "macos-ioreg".to_string(),
-            support_level: "partial".to_string(),
-            notes: None,
-            collection_method: format!("ioreg -r -n {class_name} -l"),
-        });
+    /// One IOAccelerator node: its class and `ioreg -l` property dump.
+    #[derive(Debug)]
+    pub(super) struct Accelerator {
+        pub class: String,
+        pub dump: String,
+    }
 
-        let perf = extract_braced_object(&output, "PerformanceStatistics")
-            .or_else(|| io_compat.as_deref().and_then(|obj| extract_braced_object(obj, "PerformanceStatistics")));
-        let power_metrics = collect_powermetrics_gpu_info();
+    /// Every GPU on the machine: Apple silicon has one, Intel Macs can have an
+    /// integrated Intel GPU plus a discrete AMD/NVIDIA one (or an eGPU).
+    pub fn collect_static_all() -> Vec<GpuInfo> {
+        let accels = accelerators();
+        let profiler = collect_system_profiler_gpus();
+        let mut used = vec![false; profiler.len()];
+        accels
+            .iter()
+            .enumerate()
+            .map(|(i, accel)| {
+                let vendor = accelerator_vendor(accel);
+                let pick = profiler
+                    .iter()
+                    .enumerate()
+                    .position(|(j, p)| !used[j] && p.vendor.as_deref().is_some_and(|v| v.eq_ignore_ascii_case(&vendor)))
+                    .or_else(|| (accels.len() == 1 && !profiler.is_empty()).then_some(0));
+                if let Some(j) = pick {
+                    used[j] = true;
+                }
+                static_info(accel, pick.map(|j| &profiler[j]), i as u32)
+            })
+            .collect()
+    }
 
-        if let Some(perf) = perf {
-            info.utilization_pct = extract_object_f32(&perf, "Device Utilization %")
-                .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"));
-            info.renderer_utilization_pct = extract_object_f32(&perf, "Renderer Utilization %");
-            info.tiler_utilization_pct = extract_object_f32(&perf, "Tiler Utilization %");
-            info.memory_used_bytes = extract_object_u64(&perf, "In use system memory");
-            info.memory_allocated_bytes = extract_object_u64(&perf, "Alloc system memory");
-            info.memory_driver_bytes = extract_object_u64(&perf, "In use system memory (driver)");
-            if info.memory_used_bytes.is_none() {
-                info.memory_used_bytes = derive_used_memory_from_vram_free(&perf, info.memory_total_bytes);
-            }
-            info.support_level = "full".to_string();
-        }
-
-        info.memory_total_bytes = info
-            .memory_total_bytes
-            .or_else(|| extract_u64_value(&output, "recommendedMaxWorkingSetSize"))
-            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024));
-        info.power_state = extract_nested_u64_value(&output, "IOPowerManagement", "CurrentPowerState");
-        info.last_submission_pid = extract_nested_u64_value(&output, "AGCInfo", "fLastSubmissionPID").map(|v| v as u32);
-        if let Some(active) = power_metrics.active_residency_pct {
-            info.utilization_pct = Some(active);
-            info.support_level = "full".to_string();
-        } else if power_metrics.frequency_mhz.is_some() || power_metrics.power_mw.is_some() {
-            info.support_level = "partial".to_string();
-        }
-        if let Some(freq) = power_metrics.frequency_mhz {
-            info.frequency_mhz = Some(freq);
-        }
-        if let Some(backend) = power_metrics.backend.clone() {
-            info.backend = backend;
-        }
-        info.notes = Some(match power_metrics.notes {
-            Some(extra) => format!("Using discovered IORegistry class {class_name}. {extra}"),
-            None => format!("Using discovered IORegistry class {class_name}. Temperature is not exposed by this backend."),
-        });
-        info.collection_method = format!("ioreg -r -n {class_name} -l");
-
-        Some(info)
+    pub fn collect_dynamic_all(base: &[GpuInfo]) -> Vec<GpuInfo> {
+        let accels = accelerators();
+        // powermetrics reports one GPU (Apple silicon); don't guess which
+        // adapter its numbers belong to on multi-GPU Intel Macs.
+        let power_metrics = if accels.len() == 1 { Some(collect_powermetrics_gpu_info()) } else { None };
+        accels
+            .iter()
+            .enumerate()
+            .map(|(i, accel)| {
+                let mut info = base
+                    .iter()
+                    .find(|b| b.adapter_index == Some(i as u32))
+                    .cloned()
+                    .unwrap_or_else(|| static_info(accel, None, i as u32));
+                apply_dynamic(&mut info, accel, power_metrics.as_ref());
+                info
+            })
+            .collect()
     }
 
     pub fn unsupported_info() -> Option<GpuInfo> {
         None
     }
 
-    // Single GPU for now: multi-GPU Intel Macs would need per-node IORegistry
-    // parsing, which can't be verified without the hardware.
-    pub fn collect_static_all() -> Vec<GpuInfo> {
-        collect_static_info().into_iter().collect()
+    fn static_info(accel: &Accelerator, profiler: Option<&ProfilerGpu>, index: u32) -> GpuInfo {
+        let output = &accel.dump;
+        let class_name = &accel.class;
+        let io_compat = extract_braced_object(output, "IOCompatibilityProperties");
+        let vendor = profiler.and_then(|p| p.vendor.clone()).unwrap_or_else(|| accelerator_vendor(accel));
+        let name = profiler.and_then(|p| p.name.clone())
+            .or_else(|| extract_quoted_value(output, "model"))
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "MetalPluginName")))
+            .or_else(|| io_compat.as_deref().and_then(|obj| extract_object_string(obj, "IOGLBundleName")))
+            .or_else(|| extract_quoted_value(output, "CFBundleName"))
+            .or_else(|| infer_name_from_class(class_name, &vendor))
+            .unwrap_or_else(|| format!("{} GPU", vendor));
+        let core_count = profiler.and_then(|p| p.core_count).or_else(|| {
+            extract_u64_value(output, "gpu-core-count")
+                .or_else(|| extract_u64_value(output, "num_cores"))
+                .map(|v| v as usize)
+        });
+
+        let mut info = GpuInfo {
+            platform: "macOS".to_string(),
+            name,
+            vendor,
+            core_count,
+            memory_total_bytes: memory_total(output, io_compat.as_deref()).or(profiler.and_then(|p| p.vram_bytes)),
+            power_state: extract_nested_u64_value(output, "IOPowerManagement", "CurrentPowerState"),
+            adapter_index: Some(index),
+            backend: "macos-ioreg".to_string(),
+            support_level: if output.contains("PerformanceStatistics") { "full" } else { "partial" }.to_string(),
+            notes: Some(format!("IORegistry node {class_name}; identity from system_profiler.")),
+            collection_method: format!("ioreg -r -d 1 -c IOAccelerator ({class_name})"),
+            ..Default::default()
+        };
+        apply_performance_statistics(&mut info, output, io_compat.as_deref());
+        info
     }
 
-    pub fn collect_dynamic_all(base: &[GpuInfo]) -> Vec<GpuInfo> {
-        collect_dynamic_info(base.first()).into_iter().collect()
+    fn memory_total(output: &str, io_compat: Option<&str>) -> Option<u64> {
+        extract_u64_value(output, "recommendedMaxWorkingSetSize")
+            .or_else(|| extract_u64_value(output, "VRAM,totalMB").map(|mb| mb * 1024 * 1024))
+            .or_else(|| io_compat.and_then(|obj| extract_object_u64(obj, "VRAM,totalMB")).map(|mb| mb * 1024 * 1024))
     }
 
-    fn collect_system_profiler_info() -> SystemProfilerGpuInfo {
+    /// Fill live fields from the node's `PerformanceStatistics`. Apple silicon
+    /// reports Device/Renderer/Tiler utilization; AMD and Intel drivers on
+    /// Intel Macs use their own keys ("GPU Activity(%)", "Temperature(C)", …).
+    fn apply_performance_statistics(info: &mut GpuInfo, output: &str, io_compat: Option<&str>) -> bool {
+        let Some(perf) = extract_braced_object(output, "PerformanceStatistics")
+            .or_else(|| io_compat.and_then(|obj| extract_braced_object(obj, "PerformanceStatistics")))
+        else {
+            return false;
+        };
+        info.utilization_pct = extract_object_f32(&perf, "Device Utilization %")
+            .or_else(|| extract_object_f32(&perf, "GPU Activity(%)"))
+            .or_else(|| extract_object_f32(&perf, "GPU Core Utilization"))
+            .map(|v| v.clamp(0.0, 100.0));
+        info.renderer_utilization_pct = extract_object_f32(&perf, "Renderer Utilization %");
+        info.tiler_utilization_pct = extract_object_f32(&perf, "Tiler Utilization %");
+        info.memory_used_bytes = extract_object_u64(&perf, "In use system memory")
+            .or_else(|| extract_object_u64(&perf, "vramUsedBytes"));
+        info.memory_allocated_bytes = extract_object_u64(&perf, "Alloc system memory");
+        info.memory_driver_bytes = extract_object_u64(&perf, "In use system memory (driver)");
+        if info.memory_used_bytes.is_none() {
+            info.memory_used_bytes = derive_used_memory_from_vram_free(&perf, info.memory_total_bytes);
+        }
+        if let Some(t) = extract_object_f32(&perf, "Temperature(C)").filter(|t| *t > 0.0 && *t < 150.0) {
+            info.temperature_c = Some(t);
+        }
+        if let Some(mhz) = extract_object_u64(&perf, "Core Clock(MHz)").filter(|v| *v > 0) {
+            info.frequency_mhz = Some(mhz);
+        }
+        true
+    }
+
+    fn apply_dynamic(info: &mut GpuInfo, accel: &Accelerator, power_metrics: Option<&PowerMetricsGpuInfo>) {
+        let output = &accel.dump;
+        let class_name = &accel.class;
+        let io_compat = extract_braced_object(output, "IOCompatibilityProperties");
+        let has_perf = apply_performance_statistics(info, output, io_compat.as_deref());
+        info.support_level = if has_perf { "full" } else { "partial" }.to_string();
+        info.memory_total_bytes = info.memory_total_bytes.or_else(|| memory_total(output, io_compat.as_deref()));
+        info.power_state = extract_nested_u64_value(output, "IOPowerManagement", "CurrentPowerState");
+        info.last_submission_pid = extract_nested_u64_value(output, "AGCInfo", "fLastSubmissionPID").map(|v| v as u32);
+        info.backend = "macos-ioreg".to_string();
+        info.collection_method = format!("ioreg -r -d 1 -c IOAccelerator ({class_name})");
+
+        let mut extra = None;
+        if let Some(pm) = power_metrics {
+            if let Some(active) = pm.active_residency_pct {
+                info.utilization_pct = Some(active);
+                info.support_level = "full".to_string();
+            }
+            if let Some(freq) = pm.frequency_mhz {
+                info.frequency_mhz = Some(freq);
+            }
+            if let Some(backend) = pm.backend.clone() {
+                info.backend = backend;
+            }
+            extra = pm.notes.clone();
+        }
+        let temp_note = if info.temperature_c.is_some() { "" } else { " The driver doesn't publish a GPU temperature." };
+        info.notes = Some(match extra {
+            Some(extra) => format!("IORegistry node {class_name}.{temp_note} {extra}"),
+            None => format!("IORegistry node {class_name}.{temp_note}"),
+        });
+    }
+
+    /// Every IOAccelerator, discrete GPUs first. `-c` matches subclasses —
+    /// AGXAccelerator* (Apple silicon), IntelAccelerator, AMDRadeonX*…,
+    /// nvAccelerator — and `-d 1` keeps each node's user clients out of the dump.
+    fn accelerators() -> Vec<Accelerator> {
+        let mut accels: Vec<Accelerator> = Command::new(IOREG_PATH)
+            .args(["-r", "-d", "1", "-w", "0", "-c", "IOAccelerator", "-l"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|text| split_ioreg_nodes(&text))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|a| looks_like_gpu_dump(&a.dump))
+            .collect();
+        if accels.is_empty() {
+            // Older approach by node name, in case class matching finds nothing.
+            if let Some((class, dump)) = find_gpu_ioreg_dump() {
+                accels.push(Accelerator { class, dump });
+            }
+        }
+        accels.sort_by_key(|a| accelerator_vendor(a) == "Intel");
+        accels
+    }
+
+    /// Split `ioreg -l` output into its top-level `+-o Name  <class X, …>` nodes.
+    pub(super) fn split_ioreg_nodes(text: &str) -> Vec<Accelerator> {
+        let mut nodes: Vec<Accelerator> = Vec::new();
+        for line in text.lines() {
+            if let Some(header) = line.trim_start().strip_prefix("+-o ") {
+                let class = header
+                    .split_once("<class ")
+                    .and_then(|(_, rest)| rest.split([',', '>']).next())
+                    .unwrap_or_else(|| header.split_whitespace().next().unwrap_or(""))
+                    .trim()
+                    .to_string();
+                nodes.push(Accelerator { class, dump: String::new() });
+            } else if let Some(node) = nodes.last_mut() {
+                node.dump.push_str(line);
+                node.dump.push('\n');
+            }
+        }
+        nodes
+    }
+
+    /// Vendor from the accelerator's class. Scanning the whole dump would call
+    /// every GPU "Apple": they all carry com.apple bundle ids.
+    pub(super) fn accelerator_vendor(accel: &Accelerator) -> String {
+        let class = extract_quoted_value(&accel.dump, "IOClass").unwrap_or_else(|| accel.class.clone()).to_ascii_lowercase();
+        if class.contains("agx") || class.starts_with("apple") {
+            "Apple".to_string()
+        } else if class.contains("intel") {
+            "Intel".to_string()
+        } else if class.contains("amd") || class.contains("radeon") {
+            "AMD".to_string()
+        } else if class.starts_with("nv") || class.contains("nvidia") || class.contains("geforce") {
+            "NVIDIA".to_string()
+        } else {
+            infer_vendor(&accel.dump)
+        }
+    }
+
+    fn collect_system_profiler_gpus() -> Vec<ProfilerGpu> {
         let output = match Command::new("/usr/sbin/system_profiler")
             .args(["SPDisplaysDataType"])
             .output()
         {
             Ok(output) if output.status.success() => output,
-            _ => return SystemProfilerGpuInfo::default(),
+            _ => return Vec::new(),
         };
+        String::from_utf8(output.stdout).map(|t| parse_system_profiler(&t)).unwrap_or_default()
+    }
 
-        let text = match String::from_utf8(output.stdout) {
-            Ok(text) => text,
-            Err(_) => return SystemProfilerGpuInfo::default(),
-        };
-
-        let mut info = SystemProfilerGpuInfo::default();
+    /// Each GPU section starts at its "Chipset Model:" line.
+    pub(super) fn parse_system_profiler(text: &str) -> Vec<ProfilerGpu> {
+        let mut gpus: Vec<ProfilerGpu> = Vec::new();
         for line in text.lines() {
             let trimmed = line.trim();
-            if info.name.is_none() {
-                if let Some(value) = trimmed.strip_prefix("Chipset Model: ") {
-                    info.name = Some(value.trim().to_string());
-                    continue;
-                }
+            if let Some(value) = trimmed.strip_prefix("Chipset Model: ") {
+                gpus.push(ProfilerGpu { name: Some(value.trim().to_string()), ..Default::default() });
+                continue;
             }
-            if info.vendor.is_none() {
-                if let Some(value) = trimmed.strip_prefix("Vendor: ") {
-                    info.vendor = Some(value.split('(').next().unwrap_or(value).trim().to_string());
-                    continue;
+            let Some(gpu) = gpus.last_mut() else { continue };
+            if let Some(value) = trimmed.strip_prefix("Vendor: ") {
+                if gpu.vendor.is_none() {
+                    let vendor = value.split('(').next().unwrap_or(value).trim();
+                    // "sppci_vendor_Apple" on some releases.
+                    let vendor = vendor.rsplit('_').next().unwrap_or(vendor);
+                    gpu.vendor = Some(vendor.to_string());
                 }
-            }
-            if info.core_count.is_none() {
-                if let Some(value) = trimmed.strip_prefix("Total Number of Cores: ") {
-                    if let Ok(parsed) = value.trim().parse::<usize>() {
-                        info.core_count = Some(parsed);
-                        continue;
-                    }
+            } else if let Some(value) = trimmed.strip_prefix("Total Number of Cores: ") {
+                gpu.core_count = value.trim().parse().ok();
+            } else if let Some((key, value)) = trimmed.split_once(": ") {
+                if key.starts_with("VRAM") && gpu.vram_bytes.is_none() {
+                    gpu.vram_bytes = parse_size(value);
                 }
             }
         }
+        gpus
+    }
 
-        if info.name.is_some() || info.vendor.is_some() || info.core_count.is_some() {
-            info.notes = Some("Static GPU identity sourced from system_profiler.".to_string());
-        }
-
-        info
+    /// "8 GB" / "1536 MB" → bytes.
+    fn parse_size(value: &str) -> Option<u64> {
+        let mut parts = value.split_whitespace();
+        let n: f64 = parts.next()?.parse().ok()?;
+        let mult = match parts.next()?.to_ascii_uppercase().as_str() {
+            "GB" => 1024.0 * 1024.0 * 1024.0,
+            "MB" => 1024.0 * 1024.0,
+            _ => return None,
+        };
+        Some((n * mult) as u64)
     }
 
     fn collect_powermetrics_gpu_info() -> PowerMetricsGpuInfo {
@@ -289,6 +380,15 @@ mod platform {
             .unwrap_or_else(|_| "/usr/local/bin/resourcescope-gpu-helper".to_string());
         let json_helper_cmd = std::env::var("RESOURCESCOPE_GPU_HELPER_JSON")
             .unwrap_or_else(|_| "/usr/local/bin/resourcescope-gpu-helper-json".to_string());
+        // powermetrics refuses to run without root; don't spawn a shell and a
+        // doomed powermetrics every few seconds unless a helper is installed.
+        let helper_installed = std::path::Path::new(&helper_cmd).exists() || std::path::Path::new(&json_helper_cmd).exists();
+        if !helper_installed && unsafe { libc::geteuid() } != 0 {
+            return PowerMetricsGpuInfo {
+                notes: Some(format!("For GPU active residency and clocks, install an elevated powermetrics helper at {helper_cmd} or {json_helper_cmd} (or set RESOURCESCOPE_GPU_HELPER / RESOURCESCOPE_GPU_HELPER_JSON).")),
+                ..Default::default()
+            };
+        }
         let shell_cmd = format!("if [ -x \"{json_helper_cmd}\" ]; then \"{json_helper_cmd}\"; elif [ -x \"{helper_cmd}\" ]; then \"{helper_cmd}\"; else powermetrics -n 1 -i 1000 --samplers gpu_power --format plist 2>/dev/null || true; fi");
         // Plain `sh -c`: a login shell (`-l`) re-sources the user's profile on
         // every poll, which is slow and can print noise into stdout.
@@ -584,6 +684,18 @@ mod platform {
     fn apply_sysfs_sample(info: &mut GpuInfo, card: &Path, nvidia: &[nvidia_smi::Sample]) {
         let dev = card.join("device");
         info.utilization_pct = read_percent(dev.join("gpu_busy_percent"));
+        // i915 / xe have no busy file; derive it from engine busy counters.
+        let mut busy_source = None;
+        if info.utilization_pct.is_none() && info.vendor == "Intel" {
+            let driver = fs::read_link(dev.join("driver"))
+                .ok()
+                .and_then(|t| t.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            if let Some((pct, source)) = pci_address(card).and_then(|addr| crate::drm_busy::busy_pct(&addr, &driver)) {
+                info.utilization_pct = Some(pct);
+                busy_source = Some(source);
+            }
+        }
         info.temperature_c = read_hwmon_temp_c(card);
         // amdgpu exposes VRAM usage directly.
         info.memory_used_bytes = read_u64(dev.join("mem_info_vram_used"));
@@ -592,7 +704,10 @@ mod platform {
             .or_else(|| read_u64(card.join("gt_act_freq_mhz")))
             .or_else(|| read_u64(card.join("gt_cur_freq_mhz")));
         info.backend = "linux-sysfs".to_string();
-        info.collection_method = format!("{} + hwmon", card.display());
+        info.collection_method = match busy_source {
+            Some(source) => format!("{} + hwmon + {source}", card.display()),
+            None => format!("{} + hwmon", card.display()),
+        };
 
         // The proprietary NVIDIA driver exposes nothing useful in sysfs;
         // nvidia-smi ships with it and covers utilization, VRAM, and temps.
@@ -615,9 +730,11 @@ mod platform {
         let have_extra = info.temperature_c.is_some() || info.memory_used_bytes.is_some();
         info.support_level = if have_util && have_extra { "full" } else if have_util || have_extra { "partial" } else { "minimal" }.to_string();
         info.notes = Some(match (info.vendor.as_str(), have_util) {
+            (_, true) if busy_source == Some("DRM fdinfo") => "Utilization from DRM fdinfo engine counters of the processes you can see (run as root, or allow perf events, for the system-wide i915 PMU); frequency and temperature from sysfs/hwmon.".to_string(),
+            (_, true) if busy_source.is_some() => "Utilization from the i915 PMU engine counters; frequency and temperature from sysfs/hwmon.".to_string(),
             (_, true) => "Live telemetry from the DRM/sysfs + hwmon interfaces.".to_string(),
             ("NVIDIA", false) => "NVIDIA GPU found, but nvidia-smi was not available. Install the proprietary driver's utilities for live telemetry.".to_string(),
-            ("Intel", false) => "Intel GPUs don't expose a utilization counter via sysfs; frequency and temperature are shown when available.".to_string(),
+            ("Intel", false) => "Utilization needs DRM fdinfo engine stats (Linux 5.19+ for i915, 6.8+ for xe) or the i915 PMU; frequency and temperature are shown when available.".to_string(),
             _ => "This driver exposes only partial telemetry via sysfs/hwmon.".to_string(),
         });
     }
@@ -741,6 +858,11 @@ mod platform {
     use super::{nvidia_smi, GpuInfo};
     use std::sync::Mutex;
     use windows::core::w;
+    use windows::Wdk::Graphics::Direct3D::{
+        D3DKMTCloseAdapter, D3DKMTOpenAdapterFromLuid, D3DKMTQueryAdapterInfo, D3DKMT_ADAPTER_PERFDATA, D3DKMT_CLOSEADAPTER,
+        D3DKMT_OPENADAPTERFROMLUID, D3DKMT_QUERYADAPTERINFO, KMTQAITYPE_ADAPTERPERFDATA, KMTQAITYPE_PHYSICALADAPTERCOUNT,
+    };
+    use windows::Win32::Foundation::LUID;
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
     use windows::Win32::System::Performance::{
         PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
@@ -791,11 +913,15 @@ mod platform {
                 // Task Manager's GPU numbers come from these counters, so ours match it.
                 info.utilization_pct = util;
                 info.memory_used_bytes = dedicated_used.filter(|_| !adapter.is_integrated());
+                // Driver-reported temperature (WDDM 2.4+): AMD, Intel Arc and
+                // NVIDIA alike, without vendor SDKs. nvidia-smi overrides below.
+                info.temperature_c = adapter_temperature_c(adapter);
                 info.backend = "windows-dxgi-pdh".to_string();
                 info.collection_method = "DXGI + PDH \\GPU Engine(*)\\Utilization Percentage".to_string();
                 info.support_level = if util.is_some() { "full" } else { "partial" }.to_string();
                 info.notes = Some(if util.is_some() {
-                    "Utilization and dedicated memory from Windows GPU perf counters (same source as Task Manager).".to_string()
+                    let temp = if info.temperature_c.is_some() { ", and the driver-reported temperature" } else { "" };
+                    format!("Utilization and dedicated memory from Windows GPU perf counters{temp} (same sources as Task Manager).")
                 } else {
                     "DXGI adapter discovery is active; GPU Engine perf counters were unavailable in this session (they need WDDM 2.0+ drivers).".to_string()
                 });
@@ -902,6 +1028,49 @@ mod platform {
             }
         }
         out
+    }
+
+    /// Temperature from `D3DKMTQueryAdapterInfo(KMTQAITYPE_ADAPTERPERFDATA)`,
+    /// which Task Manager shows under "GPU temperature". Drivers that don't
+    /// implement it (older WDDM, many integrated GPUs) report 0 → `None`.
+    /// Linked adapters (several physical GPUs behind one LUID) report the hottest.
+    fn adapter_temperature_c(adapter: &AdapterInfo) -> Option<f32> {
+        unsafe {
+            let mut open = D3DKMT_OPENADAPTERFROMLUID {
+                AdapterLuid: LUID { LowPart: adapter.luid_low, HighPart: adapter.luid_high },
+                hAdapter: 0,
+            };
+            if D3DKMTOpenAdapterFromLuid(&mut open).is_err() {
+                return None;
+            }
+            let mut physical_count: u32 = 0;
+            let mut query = D3DKMT_QUERYADAPTERINFO {
+                hAdapter: open.hAdapter,
+                Type: KMTQAITYPE_PHYSICALADAPTERCOUNT,
+                pPrivateDriverData: &mut physical_count as *mut u32 as *mut _,
+                PrivateDriverDataSize: std::mem::size_of::<u32>() as u32,
+            };
+            if D3DKMTQueryAdapterInfo(&mut query).is_err() {
+                physical_count = 1;
+            }
+            let mut hottest: Option<f32> = None;
+            for index in 0..physical_count.clamp(1, 8) {
+                let mut perf = D3DKMT_ADAPTER_PERFDATA { PhysicalAdapterIndex: index, ..Default::default() };
+                let mut query = D3DKMT_QUERYADAPTERINFO {
+                    hAdapter: open.hAdapter,
+                    Type: KMTQAITYPE_ADAPTERPERFDATA,
+                    pPrivateDriverData: &mut perf as *mut D3DKMT_ADAPTER_PERFDATA as *mut _,
+                    PrivateDriverDataSize: std::mem::size_of::<D3DKMT_ADAPTER_PERFDATA>() as u32,
+                };
+                if D3DKMTQueryAdapterInfo(&mut query).is_ok() {
+                    if let Some(t) = super::kmt_temperature_c(perf.Temperature) {
+                        hottest = Some(hottest.map_or(t, |h| h.max(t)));
+                    }
+                }
+            }
+            let _ = D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER { hAdapter: open.hAdapter });
+            hottest
+        }
     }
 
     fn utf16_trimmed(buf: &[u16]) -> String {
@@ -1066,6 +1235,17 @@ fn aggregate_engine_utilization(items: &[(String, f64)], luid_tag: &str) -> Opti
     }
     let busiest = per_engine.values().cloned().fold(0.0f64, f64::max);
     Some(busiest.clamp(0.0, 100.0) as f32)
+}
+
+/// Convert `D3DKMT_ADAPTER_PERFDATA::Temperature`. It is documented in
+/// deci-Celsius, but some drivers have reported deci-Kelvin; the two ranges
+/// can't overlap for a working GPU (>200 °C vs. <-73 °C), so accept both.
+/// 0 means the driver doesn't report a temperature.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn kmt_temperature_c(raw: u32) -> Option<f32> {
+    let deci = raw as f32 / 10.0;
+    let celsius = if deci >= 200.0 { deci - 273.15 } else { deci };
+    (raw != 0 && celsius > 0.0 && celsius < 150.0).then_some(celsius)
 }
 
 /// Compare PCI addresses from nvidia-smi (`00000000:01:00.0`) and sysfs
@@ -1253,6 +1433,15 @@ mod tests {
     }
 
     #[test]
+    fn kmt_temperature_units() {
+        assert_eq!(kmt_temperature_c(0), None);
+        assert_eq!(kmt_temperature_c(455), Some(45.5));
+        // deci-Kelvin from drivers that report it that way
+        assert!((kmt_temperature_c(3186).unwrap() - 45.45).abs() < 0.01);
+        assert_eq!(kmt_temperature_c(u32::MAX), None);
+    }
+
+    #[test]
     fn pci_addresses_match_across_domain_widths() {
         assert!(same_pci_device(Some("00000000:01:00.0"), Some("0000:01:00.0")));
         assert!(same_pci_device(Some("00000000:0A:00.0"), Some("0000:0a:00.0")));
@@ -1264,6 +1453,40 @@ mod tests {
     fn amd_dpm_parsing() {
         assert_eq!(parse_amd_dpm_active_mhz("0: 500Mhz\n1: 1200Mhz *\n2: 2400Mhz\n"), Some(1200));
         assert_eq!(parse_amd_dpm_active_mhz("0: 500Mhz\n1: 1200Mhz\n"), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_multi_gpu_parsing() {
+        use platform::{accelerator_vendor, parse_system_profiler, split_ioreg_nodes, ProfilerGpu};
+        let ioreg = r#"+-o AMDRadeonX5000_AMDNavi14GraphicsAccelerator  <class AMDRadeonX5000_AMDNavi14GraphicsAccelerator, id 0x100000a2c, registered, matched, active, busy 0 (0 ms), retain 30>
+    {
+      "IOClass" = "AMDRadeonX5000_AMDNavi14GraphicsAccelerator"
+      "CFBundleIdentifier" = "com.apple.kext.AMDRadeonX5000"
+      "PerformanceStatistics" = {"GPU Activity(%)"=37,"Temperature(C)"=61,"Core Clock(MHz)"=1300,"vramUsedBytes"=1073741824,"vramFreeBytes"=3221225472}
+    }
+
++-o IntelAccelerator  <class IntelAccelerator, id 0x100000a30, registered, matched, active, busy 0 (0 ms), retain 20>
+    {
+      "IOClass" = "IntelAccelerator"
+      "CFBundleIdentifier" = "com.apple.driver.AppleIntelKBLGraphics"
+      "PerformanceStatistics" = {"Device Utilization %"=4,"In use system memory"=268435456}
+    }
+"#;
+        let nodes = split_ioreg_nodes(ioreg);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].class, "AMDRadeonX5000_AMDNavi14GraphicsAccelerator");
+        assert!(nodes[0].dump.contains("GPU Activity"));
+        assert!(!nodes[0].dump.contains("IntelAccelerator"));
+        assert_eq!(accelerator_vendor(&nodes[0]), "AMD");
+        assert_eq!(accelerator_vendor(&nodes[1]), "Intel");
+
+        let profiler = "Graphics/Displays:\n\n    Intel UHD Graphics 630:\n\n      Chipset Model: Intel UHD Graphics 630\n      Type: GPU\n      Bus: Built-In\n      VRAM (Dynamic, Max): 1536 MB\n      Vendor: Intel\n\n    AMD Radeon Pro 5500M:\n\n      Chipset Model: AMD Radeon Pro 5500M\n      Type: GPU\n      Bus: PCIe\n      VRAM (Total): 4 GB\n      Vendor: AMD (0x1002)\n";
+        let gpus = parse_system_profiler(profiler);
+        assert_eq!(gpus, vec![
+            ProfilerGpu { name: Some("Intel UHD Graphics 630".into()), vendor: Some("Intel".into()), core_count: None, vram_bytes: Some(1536 * 1024 * 1024) },
+            ProfilerGpu { name: Some("AMD Radeon Pro 5500M".into()), vendor: Some("AMD".into()), core_count: None, vram_bytes: Some(4 * 1024 * 1024 * 1024) },
+        ]);
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

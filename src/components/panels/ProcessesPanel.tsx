@@ -10,7 +10,7 @@ const EMPTY_PROCESSES: ProcessInfo[] = []
 const ROW_HEIGHT = 52
 const OVERSCAN = 8
 
-type SortKey = 'cpu_pct' | 'mem_bytes' | 'disk' | 'name' | 'pid'
+type SortKey = 'cpu_pct' | 'mem_bytes' | 'disk' | 'net' | 'name' | 'pid'
 type ViewMode = 'apps' | 'all'
 
 interface AppGroup {
@@ -20,6 +20,7 @@ interface AppGroup {
   cpu_pct: number
   mem_bytes: number
   disk: number
+  net: number
   kind: string
 }
 
@@ -31,9 +32,11 @@ type Row =
 type Selection = { type: 'proc'; pid: number } | { type: 'group'; key: string } | null
 
 const diskOf = (p: ProcessInfo) => p.disk_read_bps + p.disk_write_bps
+const netOf = (p: ProcessInfo) => p.net_rx_bps + p.net_tx_bps
 
 function sortValue(item: ProcessInfo | AppGroup, key: SortKey): number | string {
   if (key === 'disk') return 'procs' in item ? item.disk : diskOf(item)
+  if (key === 'net') return 'procs' in item ? item.net : netOf(item)
   if (key === 'name') return ('procs' in item ? item.name : item.friendly_name ?? item.name).toLowerCase()
   if (key === 'pid') return 'procs' in item ? item.procs[0]?.pid ?? 0 : item.pid
   return item[key]
@@ -112,6 +115,8 @@ export default function ProcessesPanel() {
   const processes = useMetricsStore(s => s.snapshot?.processes ?? EMPTY_PROCESSES)
   const processCount = useMetricsStore(s => s.snapshot?.process_count ?? 0)
   const truncated = useMetricsStore(s => s.snapshot?.processes_truncated ?? false)
+  const procNet = useMetricsStore(s => s.snapshot?.process_net)
+  const showNet = procNet?.available ?? false
   const showMinibar = useSettingsStore(s => s.showMinibar)
   const actionLabels = processActionLabels(usePlatformStore(p => p.info?.os))
 
@@ -145,13 +150,14 @@ export default function ProcessesPanel() {
     for (const p of filtered) {
       let g = map.get(p.group_key)
       if (!g) {
-        g = { key: p.group_key, name: p.app_name, procs: [], cpu_pct: 0, mem_bytes: 0, disk: 0, kind: p.process_kind }
+        g = { key: p.group_key, name: p.app_name, procs: [], cpu_pct: 0, mem_bytes: 0, disk: 0, net: 0, kind: p.process_kind }
         map.set(p.group_key, g)
       }
       g.procs.push(p)
       g.cpu_pct += p.cpu_pct
       g.mem_bytes += p.mem_bytes
       g.disk += diskOf(p)
+      g.net += netOf(p)
     }
     const list = [...map.values()]
     for (const g of list) g.procs.sort(compare<ProcessInfo>(sortKey, sortDir))
@@ -254,6 +260,7 @@ export default function ProcessesPanel() {
     { key: 'cpu_pct', label: 'CPU', col: 'minmax(0,1.3fr)' },
     { key: 'mem_bytes', label: 'Memory', col: 'minmax(0,1fr)' },
     { key: 'disk', label: 'Disk', col: 'minmax(0,1fr)' },
+    ...(showNet ? [{ key: 'net' as const, label: 'Network', col: 'minmax(0,1fr)' }] : []),
   ]
   const gridTemplateColumns = COLS.map(c => c.col).join(' ')
 
@@ -289,6 +296,7 @@ export default function ProcessesPanel() {
           {showMinibar ? <UsageBar value={g.cpu_pct} max={Math.max(maxCpu, g.cpu_pct)} color="var(--accent-blue)" /> : <span className="text-xs tabular-nums">{g.cpu_pct.toFixed(1)}%</span>}
           <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{fmtBytes(g.mem_bytes)}</span>
           <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{g.disk > 0 ? fmtBps(g.disk) : '—'}</span>
+          {showNet && <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{g.net > 0 ? fmtBps(g.net) : '—'}</span>}
         </div>
       )
     }
@@ -312,6 +320,7 @@ export default function ProcessesPanel() {
         {showMinibar ? <UsageBar value={p.cpu_pct} max={maxCpu} color="var(--accent-blue)" /> : <span className="text-xs tabular-nums">{p.cpu_pct.toFixed(1)}%</span>}
         <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{fmtBytes(p.mem_bytes)}</span>
         <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{diskOf(p) > 0 ? fmtBps(diskOf(p)) : '—'}</span>
+        {showNet && <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>{netOf(p) > 0 ? fmtBps(netOf(p)) : '—'}</span>}
       </div>
     )
   }
@@ -325,6 +334,9 @@ export default function ProcessesPanel() {
             {processCount} running{view === 'apps' ? ` · ${groups.length} apps` : ''} · {filtered.length} shown
             {truncated && ' · loading full list…'}
           </p>
+          {procNet && !procNet.available && procNet.note && (
+            <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{procNet.note}</p>
+          )}
         </div>
         <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'var(--overlay-1)', border: '1px solid var(--border)' }}>
           {(['apps', 'all'] as const).map(v => (
@@ -381,6 +393,7 @@ export default function ProcessesPanel() {
               error={actionError}
               onAction={onGroupAction}
               onSelect={pid => setSelection({ type: 'proc', pid })}
+              showNet={showNet}
             />
           ) : selectedProc ? (
             <div className="flex flex-col gap-4">
@@ -408,6 +421,8 @@ export default function ProcessesPanel() {
                 <DetailRow label="Memory" value={fmtBytes(selectedProc.mem_bytes)} />
                 <DetailRow label="Disk read" value={fmtBps(selectedProc.disk_read_bps)} />
                 <DetailRow label="Disk write" value={fmtBps(selectedProc.disk_write_bps)} />
+                {showNet && <DetailRow label="Network in" value={fmtBps(selectedProc.net_rx_bps)} />}
+                {showNet && <DetailRow label="Network out" value={fmtBps(selectedProc.net_tx_bps)} />}
                 <DetailRow label="PID" value={String(selectedProc.pid)} />
                 <DetailRow label="Running for" value={fmtDuration(selectedProc.run_time_secs)} />
                 <DetailRow label="Status" value={selectedProc.status} />
@@ -471,7 +486,7 @@ function ActionButtons({ labels, busy, onAction, confirm, countSuffix = '' }: {
   )
 }
 
-function GroupDetails({ group, totalCount, pidList, labels, busy, confirm, error, onAction, onSelect }: {
+function GroupDetails({ group, totalCount, pidList, labels, busy, confirm, error, onAction, onSelect, showNet }: {
   group: AppGroup
   totalCount: number
   pidList: string
@@ -480,6 +495,7 @@ function GroupDetails({ group, totalCount, pidList, labels, busy, confirm, error
   confirm: 'quit' | 'force' | null
   error: string | null
   onAction: (force: boolean) => void
+  showNet: boolean
   onSelect: (pid: number) => void
 }) {
   const users = [...new Set(group.procs.map(p => p.user).filter(Boolean))]
@@ -499,10 +515,11 @@ function GroupDetails({ group, totalCount, pidList, labels, busy, confirm, error
         </p>
       )}
       {error && <p className="text-xs leading-5" style={{ color: 'var(--accent-red)' }}>{error}</p>}
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${showNet ? 'grid-cols-2' : 'grid-cols-3'}`}>
         <DetailRow label="CPU" value={`${group.cpu_pct.toFixed(1)}%`} />
         <DetailRow label="Memory" value={fmtBytes(group.mem_bytes)} />
         <DetailRow label="Disk" value={group.disk > 0 ? fmtBps(group.disk) : '—'} />
+        {showNet && <DetailRow label="Network" value={group.net > 0 ? fmtBps(group.net) : '—'} />}
       </div>
       {users.length > 0 && <DetailRow label={users.length > 1 ? 'Users' : 'User'} value={users.join(', ')} />}
       <div className="flex flex-col gap-1">

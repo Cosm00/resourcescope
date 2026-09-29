@@ -15,7 +15,7 @@ function snapshot(): MetricsSnapshot {
   const gpus = [gpu('dGPU', 40, 1), gpu('iGPU', null, 0)]
   return {
     timestamp: 1,
-    cpu: { usage_pct: 12, core_usage: [10, 14], core_count: 2, model: 'Test', load_avg: [0, 0, 0], frequency_mhz: 3000 },
+    cpu: { usage_pct: 12, core_usage: [10, 14], core_count: 2, model: 'Test', load_avg: [0, 0, 0], frequency_mhz: 3000, core_temps: [] },
     memory: { total_bytes: 8e9, used_bytes: 2e9, available_bytes: 6e9, usage_pct: 25, swap_total_bytes: 0, swap_used_bytes: 0 },
     gpu: gpus[0],
     gpus,
@@ -28,6 +28,7 @@ function snapshot(): MetricsSnapshot {
     processes: [],
     process_count: 0,
     processes_truncated: true,
+    process_net: { available: true, scope: 'TCP', note: null },
     health: { cpu_temp: null, gpu_temp: null, overall: 'good' },
   }
 }

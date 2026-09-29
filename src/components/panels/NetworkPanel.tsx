@@ -2,6 +2,7 @@ import React, { useMemo } from 'react'
 import { useMetricsStore, fmtBytes, fmtBps } from '../../store/metricsStore'
 import type { NetInfo } from '../../types'
 import Sparkline from '../Sparkline'
+import TopProcessesPanel from '../TopProcessesPanel'
 
 const EMPTY_NETS: NetInfo[] = []
 
@@ -15,6 +16,7 @@ export default function NetworkPanel() {
   const recvHistory = useMetricsStore(s => s.netRecvHistory)
   const sentHistory = useMetricsStore(s => s.netSentHistory)
   const nets = useMetricsStore(s => s.snapshot?.networks ?? EMPTY_NETS)
+  const procNet = useMetricsStore(s => s.snapshot?.process_net)
 
   const busiestDownload = useMemo(() => [...nets].sort((a, b) => b.recv_bps - a.recv_bps)[0], [nets])
   const busiestUpload = useMemo(() => [...nets].sort((a, b) => b.sent_bps - a.sent_bps)[0], [nets])
@@ -117,6 +119,19 @@ export default function NetworkPanel() {
           )}
         </div>
       </div>
+
+      {procNet?.available ? (
+        <TopProcessesPanel
+          title="Top Network Processes"
+          subtitle={procNet.note ?? undefined}
+          mode="network"
+        />
+      ) : procNet?.note ? (
+        <div className="rounded-2xl p-5 flex flex-col gap-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Top Network Processes</div>
+          <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{procNet.note}</div>
+        </div>
+      ) : null}
     </div>
   )
 }

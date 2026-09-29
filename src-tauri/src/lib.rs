@@ -1,9 +1,14 @@
 mod alerts;
 mod battery;
+#[cfg(any(target_os = "linux", test))]
+mod drm_busy;
 mod gpu;
 mod history;
 mod metrics;
+mod netproc;
 mod processes;
+#[cfg(target_os = "macos")]
+mod smc;
 mod updates;
 
 use metrics::{is_system_mount, scan_directory_usage, DiskScanResult, MetricsCollector, MetricsSnapshot};
@@ -680,6 +685,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Keep the last minute of history across restarts.
                 save_history_now(app);
+                netproc::shutdown();
             }
         });
 }
