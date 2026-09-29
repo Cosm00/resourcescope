@@ -550,14 +550,72 @@ fn start_metrics_loop(app: AppHandle, shared: LoopShared) {
     }
 }
 
+// ─── Startup diagnostics ──────────────────────────────────────────────────────
+
+/// A GUI app that dies during startup leaves no trace on Windows (no
+/// console). Panics and startup errors go to this file — the same directory
+/// Tauri uses for app logs — so a "double-click does nothing" report has
+/// something to go on.
+fn startup_log_path() -> Option<std::path::PathBuf> {
+    const ID: &str = "com.cosm00.resourcescope";
+    let home = || std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from);
+    let dir = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)?.join(ID).join("logs")
+    } else if cfg!(target_os = "macos") {
+        home()?.join("Library/Logs").join(ID)
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| home().map(|h| h.join(".local/share")))?
+            .join(ID)
+            .join("logs")
+    };
+    Some(dir.join("startup.log"))
+}
+
+fn log_startup(message: &str) {
+    use std::io::Write;
+    eprintln!("{message}");
+    let Some(path) = startup_log_path() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{} ms] v{} {message}", metrics::now_ms(), env!("CARGO_PKG_VERSION"));
+    }
+}
+
+/// Tell the user why the app didn't open, where there's no console to see.
+fn fatal_startup_error(message: &str) -> ! {
+    log_startup(message);
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+        let log = startup_log_path().map(|p| p.display().to_string()).unwrap_or_default();
+        let text = HSTRING::from(format!("ResourceScope couldn't start.\n\n{message}\n\nDetails were saved to:\n{log}"));
+        unsafe {
+            MessageBoxW(None, &text, &HSTRING::from("ResourceScope"), MB_ICONERROR | MB_OK);
+        }
+    }
+    std::process::exit(1);
+}
+
 // ─── App entry ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let collector_inner = MetricsCollector::new();
-    let full_process_list = FullProcessListState(Arc::clone(&collector_inner.full_process_list));
-    let collector = Arc::new(Mutex::new(collector_inner));
-    let collector_for_loop = Arc::clone(&collector);
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log_startup(&format!("panic: {info}"));
+        default_hook(info);
+    }));
+
+    // Built on a background thread once the window is up (see setup): some
+    // sensor queries (WMI on Windows, SMC, nvidia-smi) can take seconds, and
+    // the window must never wait on them.
+    let full_process_list_flag: Arc<AtomicBool> = Arc::default();
+    let full_process_list = FullProcessListState(Arc::clone(&full_process_list_flag));
 
     // Default interval: 1500ms — changeable at runtime via set_refresh_interval
     let interval_state: IntervalState = Arc::new(AtomicU64::new(1500));
@@ -582,6 +640,20 @@ pub fn run() {
         .is_some_and(|k| !k.trim().is_empty());
 
     let mut builder = tauri::Builder::default();
+    // Must be the first plugin. Launching again (Start menu, desktop icon)
+    // while an instance runs — often hidden in the tray, where Windows tucks
+    // the icon out of sight — brings that window back instead of starting a
+    // second, invisible copy.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if !argv.iter().any(|a| a == MINIMIZED_ARG) {
+                if let Err(e) = show_main_window(app) {
+                    eprintln!("could not show main window: {e}");
+                }
+            }
+        }));
+    }
     #[cfg(desktop)]
     if updater_configured {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -596,7 +668,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(collector)
         .manage(interval_state)
         .manage(menubar_stats_state)
         .manage(menubar_mode_state)
@@ -662,25 +733,38 @@ pub fn run() {
             app.manage(Arc::clone(&alerts));
 
             let handle = app.handle().clone();
-            start_metrics_loop(
-                handle,
-                LoopShared {
-                    collector: collector_for_loop,
-                    history,
-                    alerts,
-                    interval: interval_for_loop,
-                    menubar_stats: menubar_stats_for_loop,
-                    menubar_mode: menubar_mode_for_loop,
-                    menubar_interval: menubar_interval_for_loop,
-                },
-            );
+            let init = std::thread::Builder::new().name("resourcescope-init".into()).spawn(move || {
+                let started = Instant::now();
+                let mut collector = MetricsCollector::new();
+                collector.full_process_list = full_process_list_flag;
+                if started.elapsed() > Duration::from_secs(5) {
+                    log_startup(&format!("collectors took {:.1}s to initialise", started.elapsed().as_secs_f32()));
+                }
+                let collector: CollectorState = Arc::new(Mutex::new(collector));
+                handle.manage(Arc::clone(&collector));
+                start_metrics_loop(
+                    handle,
+                    LoopShared {
+                        collector,
+                        history,
+                        alerts,
+                        interval: interval_for_loop,
+                        menubar_stats: menubar_stats_for_loop,
+                        menubar_mode: menubar_mode_for_loop,
+                        menubar_interval: menubar_interval_for_loop,
+                    },
+                );
+            });
+            if let Err(e) = init {
+                log_startup(&format!("failed to start collectors: {e}"));
+            }
             if updater_configured {
                 updates::start_loop(app.handle().clone());
             }
             Ok(())
         })
         .build(context)
-        .expect("error while building tauri application")
+        .unwrap_or_else(|e| fatal_startup_error(&format!("The window couldn't be created: {e}")))
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 // Keep the last minute of history across restarts.

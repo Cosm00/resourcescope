@@ -8,6 +8,7 @@
 - **Per-core CPU temperatures:** a Core Temperatures card on the CPU tab — Intel cores and AMD CCDs on Linux, P-/E-core cluster sensors on Apple silicon, and per-core SMC sensors on Intel Macs. No root or `powermetrics` needed.
 
 ### Fixed
+- **Windows: double-clicking the app could do nothing.** The window now opens before the sensor collectors start (a slow WMI / GPU query can no longer keep it from appearing), launching the app again brings back an instance that's already running — often hidden in the tray's overflow — instead of starting an invisible second copy, and a failure to start shows an error message and is logged to `%LOCALAPPDATA%\com.cosm00.resourcescope\logs\startup.log`.
 - Releases are published automatically once every platform has built, instead of staying drafts (nothing after 1.1.6 was public, and in-app updates only see published releases). A manual run can also publish an existing draft.
 - macOS no longer spawns a doomed `powermetrics` every few seconds when it isn't running as root and no helper is installed.
 - macOS GPU vendor detection no longer calls every GPU "Apple" when system_profiler has no match.
