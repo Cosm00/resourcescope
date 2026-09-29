@@ -100,6 +100,9 @@ export default function SettingsPanel() {
   const updateDescription =
     update.status === 'up-to-date' ? 'You have the latest version'
     : update.status === 'available' ? `Version ${update.latest} is available`
+    : update.status === 'downloading' ? `Downloading ${update.latest}${update.progress != null ? ` · ${update.progress.toFixed(0)}%` : '…'}`
+    : update.status === 'ready' ? `Version ${update.latest} is downloaded. Restart to finish updating`
+    : update.status === 'installing' ? `Installing ${update.latest}…`
     : update.status === 'error' ? `Update check failed: ${update.error}`
     : 'ResourceScope'
 
@@ -272,10 +275,10 @@ export default function SettingsPanel() {
           <Row label="Version" description={updateDescription}>
             <div className="flex items-center gap-3">
               <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>{appVersion}</span>
-              {update.status === 'available' && update.canInstall && (
+              {(update.status === 'available' || update.status === 'ready') && update.canInstall && (
                 <button type="button" onClick={update.install} className="px-3 py-1.5 rounded-xl text-xs font-semibold"
-                  style={{ background: 'rgba(79,156,249,0.14)', color: 'var(--accent-blue)', border: '1px solid rgba(79,156,249,0.25)' }}>
-                  Install {update.latest} & restart
+                  style={{ background: 'var(--accent-blue-soft)', color: 'var(--accent-blue)', border: '1px solid var(--accent-blue-soft)' }}>
+                  {update.status === 'ready' ? 'Restart to update' : `Install ${update.latest} & restart`}
                 </button>
               )}
               {update.status === 'available' && !update.canInstall && update.releaseUrl && (
@@ -284,7 +287,7 @@ export default function SettingsPanel() {
                   Download {update.latest}
                 </button>
               )}
-              {update.status !== 'available' && (
+              {!['available', 'ready', 'downloading'].includes(update.status) && (
                 <button type="button" disabled={update.status === 'checking' || update.status === 'installing'} onClick={update.check}
                   className="px-3 py-1.5 rounded-xl text-xs font-semibold"
                   style={{ background: 'var(--overlay-1)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
@@ -293,9 +296,14 @@ export default function SettingsPanel() {
               )}
             </div>
           </Row>
-          <Row label="Check Automatically" description="Look for a new version once a day">
+          <Row label="Check Automatically" description={platform?.updater_configured ? 'Look for new versions every few hours' : 'Look for a new version once a day'}>
             <Toggle checked={s.autoCheckUpdates} onChange={v => s.update({ autoCheckUpdates: v })} />
           </Row>
+          {platform?.updater_configured && (
+            <Row label="Download Updates Automatically" description="Fetch new versions in the background; they install the next time you restart ResourceScope">
+              <Toggle checked={s.autoDownloadUpdates && s.autoCheckUpdates} onChange={v => s.update({ autoDownloadUpdates: v })} />
+            </Row>
+          )}
           <Row label="Built with" description="Tauri · React · Rust · sysinfo">
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>🦀</span>
           </Row>

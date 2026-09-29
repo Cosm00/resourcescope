@@ -44,6 +44,8 @@ export interface Settings {
   // Data
   csvLogging: boolean
   autoCheckUpdates: boolean
+  /** Download new versions in the background; a restart installs them. */
+  autoDownloadUpdates: boolean
 }
 
 export interface SettingsState extends Settings {
@@ -85,6 +87,7 @@ export const DEFAULTS: Settings = {
   alertOnHighTemp: true,
   csvLogging: false,
   autoCheckUpdates: true,
+  autoDownloadUpdates: true,
 }
 
 /** Format a Celsius reading in the user's preferred unit. */

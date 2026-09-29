@@ -75,7 +75,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/apple"
           echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/apple/certificate.p12"
-          printf '%s' "$APPLE_API_PRIVATE_KEY_P8" > "$RUNNER_TEMP/apple/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
+          KEY_FILE="$RUNNER_TEMP/apple/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
+          # Accept the key pasted with literal "\n" sequences as well as real newlines.
+          printf '%b' "$APPLE_API_PRIVATE_KEY_P8" | tr -d '\r' > "$KEY_FILE"
+          # Fail here with a clear message instead of minutes later at notarization
+          # ("invalidPEMDocument").
+          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$KEY_FILE" || ! openssl pkey -in "$KEY_FILE" -noout 2>/dev/null; then
+            echo "::error::APPLE_API_PRIVATE_KEY_P8 is empty or not a valid .p8 key. Paste the whole AuthKey_<ID>.p8 file, including the BEGIN/END PRIVATE KEY lines."
+            exit 1
+          fi
 
       - name: Import Apple signing certificate
         if: matrix.platform == 'macos-latest'
