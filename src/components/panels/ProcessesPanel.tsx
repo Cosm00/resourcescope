@@ -5,8 +5,19 @@ import { usePlatformStore, processActionLabels } from '../../store/platformStore
 import { useSettingsStore } from '../../store/settingsStore'
 import type { ProcessDetails, ProcessInfo } from '../../types'
 import { fmtDuration } from '../../lib/format'
+import { byRank, ghostsOf, rankOf, useHeldOrder, type Rank } from '../../lib/heldOrder'
+import HeldBadge from '../HeldBadge'
 
 const EMPTY_PROCESSES: ProcessInfo[] = []
+const NO_PIDS: ReadonlySet<number> = new Set()
+const pidOf = (p: ProcessInfo) => p.pid
+
+/** The table's order when the pointer arrived, restored while it stays. */
+interface HeldTable {
+  procs: ProcessInfo[]
+  pidRank: Rank<number>
+  groupRank: Rank<string>
+}
 const ROW_HEIGHT = 52
 const OVERSCAN = 8
 
@@ -142,10 +153,25 @@ export default function ProcessesPanel() {
     return () => { invoke('set_full_process_list', { enabled: false }).catch(() => {}) }
   }, [])
 
+  // While the pointer is over the rows, keep them where they are (see heldOrder.ts).
+  const { snapshot: heldTable, held, hold, letGo, release: releaseHold } = useHeldOrder<HeldTable>()
+  // Processes that exited during a hold keep their row, dimmed.
+  const exited = useMemo(
+    () => (heldTable ? ghostsOf(heldTable.procs, processes, pidOf) : EMPTY_PROCESSES),
+    [heldTable, processes],
+  )
+  const exitedPids = useMemo(() => (exited.length ? new Set(exited.map(pidOf)) : NO_PIDS), [exited])
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
-    return q ? processes.filter(p => matches(p, q)) : processes
-  }, [processes, filter])
+    const all = exited.length ? [...processes, ...exited] : processes
+    return q ? all.filter(p => matches(p, q)) : all
+  }, [processes, exited, filter])
+
+  const procOrder = useMemo(
+    () => (heldTable ? byRank(heldTable.pidRank, pidOf, compare<ProcessInfo>(sortKey, sortDir)) : compare<ProcessInfo>(sortKey, sortDir)),
+    [heldTable, sortKey, sortDir],
+  )
 
   const groups = useMemo(() => {
     const map = new Map<string, AppGroup>()
@@ -156,19 +182,21 @@ export default function ProcessesPanel() {
         map.set(p.group_key, g)
       }
       g.procs.push(p)
+      if (exitedPids.has(p.pid)) continue
       g.cpu_pct += p.cpu_pct
       g.mem_bytes += p.mem_bytes
       g.disk += diskOf(p)
       g.net += netOf(p)
     }
     const list = [...map.values()]
-    for (const g of list) g.procs.sort(compare<ProcessInfo>(sortKey, sortDir))
-    return list.sort(compare<AppGroup>(sortKey, sortDir))
-  }, [filtered, sortKey, sortDir])
+    for (const g of list) g.procs.sort(procOrder)
+    const groupOrder = compare<AppGroup>(sortKey, sortDir)
+    return list.sort(heldTable ? byRank(heldTable.groupRank, g => g.key, groupOrder) : groupOrder)
+  }, [filtered, exitedPids, procOrder, heldTable, sortKey, sortDir])
 
   const rows = useMemo<Row[]>(() => {
     if (view === 'all') {
-      return [...filtered].sort(compare<ProcessInfo>(sortKey, sortDir)).map(proc => ({ type: 'proc', proc, nested: false }))
+      return [...filtered].sort(procOrder).map(proc => ({ type: 'proc', proc, nested: false }))
     }
     const out: Row[] = []
     for (const group of groups) {
@@ -181,7 +209,7 @@ export default function ProcessesPanel() {
       if (isOpen) for (const proc of group.procs) out.push({ type: 'proc', proc, nested: true })
     }
     return out
-  }, [view, filtered, groups, expanded, sortKey, sortDir])
+  }, [view, filtered, groups, expanded, procOrder])
 
   // Until the user picks something, show the first row's details, but pin
   // that choice once made so the pane doesn't jump as rankings shift each
@@ -243,6 +271,14 @@ export default function ProcessesPanel() {
     terminate(groupPids, force)
   }
 
+  // Captured when the pointer arrives; nothing is held yet, so this is
+  // exactly the order on screen.
+  const holdOrder = () =>
+    hold(() => {
+      const flat = [...filtered].sort(procOrder)
+      return { procs: flat, pidRank: rankOf(flat, pidOf), groupRank: rankOf(groups, g => g.key) }
+    })
+
   const toggleExpanded = (key: string) =>
     setExpanded(prev => {
       const next = new Set(prev)
@@ -252,6 +288,8 @@ export default function ProcessesPanel() {
     })
 
   const toggleSort = (key: SortKey) => {
+    // An explicit re-sort shouldn't wait for the hold to end.
+    releaseHold()
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc') }
   }
@@ -304,18 +342,20 @@ export default function ProcessesPanel() {
     }
     const p = row.proc
     const active = selection?.type === 'proc' && selection.pid === p.pid
-    const badge = badgeColor(p.process_kind)
+    const gone = exitedPids.has(p.pid)
+    const badge = gone ? { fg: 'var(--text-muted)', bg: 'var(--overlay-2)' } : badgeColor(p.process_kind)
     return (
       <div key={`p:${p.pid}`} role="button" tabIndex={0}
+        title={gone ? 'This process has exited' : undefined}
         className="grid px-5 items-center cursor-pointer select-none absolute left-0 right-0"
-        style={{ top, height: ROW_HEIGHT, gridTemplateColumns, borderBottom: '1px solid var(--overlay-1)', background: active ? 'rgba(79,156,249,0.08)' : 'transparent' }}
+        style={{ top, height: ROW_HEIGHT, gridTemplateColumns, borderBottom: '1px solid var(--overlay-1)', background: active ? 'rgba(79,156,249,0.08)' : 'transparent', opacity: gone ? 0.45 : 1 }}
         onClick={() => setSelection({ type: 'proc', pid: p.pid })}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelection({ type: 'proc', pid: p.pid }) } }}>
         <div className="min-w-0 pr-3" style={{ paddingLeft: row.nested ? 28 : 0 }}>
           <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.friendly_name ?? p.name}</div>
           <div className="text-[10px] truncate flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
             {!row.nested && view === 'all' && p.app_name !== p.name ? `${p.app_name} · ` : ''}{p.user ?? p.name}
-            {!row.nested && <span className="px-1.5 rounded-full uppercase" style={{ color: badge.fg, background: badge.bg }}>{p.process_kind.replace('-', ' ')}</span>}
+            {(gone || !row.nested) && <span className="px-1.5 rounded-full uppercase" style={{ color: badge.fg, background: badge.bg }}>{gone ? 'exited' : p.process_kind.replace('-', ' ')}</span>}
           </div>
         </div>
         <span className="text-xs tabular-nums font-mono" style={{ color: 'var(--text-muted)' }}>{p.pid}</span>
@@ -333,7 +373,7 @@ export default function ProcessesPanel() {
         <div className="flex-1 min-w-[200px]">
           <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Processes</h1>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {processCount} running{view === 'apps' ? ` · ${groups.length} apps` : ''} · {filtered.length} shown
+            {processCount} running{view === 'apps' ? ` · ${groups.length} apps` : ''} · {exitedPids.size ? filtered.filter(p => !exitedPids.has(p.pid)).length : filtered.length} shown
             {truncated && ' · loading full list…'}
           </p>
           {procNet && !procNet.available && procNet.note && (
@@ -342,7 +382,7 @@ export default function ProcessesPanel() {
         </div>
         <div className="flex rounded-xl p-0.5 gap-0.5" style={{ background: 'var(--overlay-1)', border: '1px solid var(--border)' }}>
           {(['apps', 'all'] as const).map(v => (
-            <button key={v} type="button" onClick={() => setView(v)} className="px-3 py-1.5 rounded-lg text-xs font-medium"
+            <button key={v} type="button" onClick={() => { releaseHold(); setView(v) }} className="px-3 py-1.5 rounded-lg text-xs font-medium"
               style={{ background: view === v ? 'rgba(79,156,249,0.18)' : 'transparent', color: view === v ? 'var(--text-primary)' : 'var(--text-muted)' }}>
               {v === 'apps' ? 'Grouped by app' : 'All processes'}
             </button>
@@ -362,7 +402,7 @@ export default function ProcessesPanel() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.8fr_1fr] gap-4 flex-1 min-h-0">
-        <div className="rounded-2xl overflow-hidden flex flex-col min-h-[240px]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <div className="rounded-2xl overflow-hidden flex flex-col min-h-[240px] relative" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
           <div className="grid px-5 py-2.5 text-[10px] uppercase tracking-widest flex-shrink-0"
             style={{ gridTemplateColumns, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'var(--overlay-1)' }}>
             {COLS.map(col => (
@@ -373,7 +413,7 @@ export default function ProcessesPanel() {
             ))}
           </div>
 
-          <div ref={scrollRef} className="overflow-y-auto flex-1 relative">
+          <div ref={scrollRef} className="overflow-y-auto flex-1 relative" onPointerEnter={holdOrder} onPointerLeave={letGo}>
             <div style={{ height: total, position: 'relative' }}>
               {rows.slice(start, end).map((row, i) => renderRow(row, start + i))}
             </div>
@@ -381,6 +421,7 @@ export default function ProcessesPanel() {
               <div className="p-6 text-sm text-center" style={{ color: 'var(--text-muted)' }}>No processes match “{filter}”.</div>
             )}
           </div>
+          <HeldBadge held={held} />
         </div>
 
         <div className="rounded-2xl p-4 overflow-y-auto" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
@@ -448,7 +489,9 @@ export default function ProcessesPanel() {
               </div>
             </div>
           ) : (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Select a process or app to see details.</div>
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {selection?.type === 'proc' ? `PID ${selection.pid} has exited.` : 'Select a process or app to see details.'}
+            </div>
           )}
         </div>
       </div>

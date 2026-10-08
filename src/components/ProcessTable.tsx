@@ -3,8 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { useMetricsStore, fmtBytes } from '../store/metricsStore'
 import { usePlatformStore, processActionLabels } from '../store/platformStore'
 import type { ProcessInfo } from '../types'
+import { byRank, ghostsOf, rankOf, useHeldOrder, type Rank } from '../lib/heldOrder'
+import HeldBadge from './HeldBadge'
 
 const EMPTY_PROCESSES: ProcessInfo[] = []
+const pidOf = (p: ProcessInfo) => p.pid
 
 type SortKey = 'cpu_pct' | 'mem_bytes' | 'name' | 'pid'
 
@@ -34,22 +37,27 @@ const ProcessRow = React.memo(function ProcessRow({
   proc,
   isLast,
   isSelected,
+  gone,
   onSelect,
 }: {
   proc: ProcessInfo
   isLast: boolean
   isSelected: boolean
+  /** Left the top list (or exited) while the order was held. */
+  gone: boolean
   onSelect: (pid: number) => void
 }) {
   return (
     <div
       role="button"
       tabIndex={0}
+      title={gone ? 'No longer among the busiest processes (or it exited)' : undefined}
       className="grid px-5 py-2.5 items-center cursor-pointer select-none"
       style={{
         gridTemplateColumns: '30% 10% 30% 30%',
         borderBottom: isLast ? 'none' : '1px solid var(--overlay-1)',
         background: isSelected ? 'rgba(79,156,249,0.08)' : 'transparent',
+        opacity: gone ? 0.45 : 1,
       }}
       onMouseDown={(e) => {
         e.preventDefault()
@@ -94,14 +102,22 @@ export default function ProcessTable() {
   const actionLabels = processActionLabels(usePlatformStore(p => p.info?.os))
   const [actionError, setActionError] = useState<string | null>(null)
 
+  // Rows stay put while the pointer is over them (see heldOrder.ts).
+  const { snapshot: held, hold, letGo, release } = useHeldOrder<{ procs: ProcessInfo[]; rank: Rank<number> }>()
+  const gone = useMemo(() => (held ? ghostsOf(held.procs, processes, pidOf) : EMPTY_PROCESSES), [held, processes])
+  const gonePids = useMemo(() => new Set(gone.map(pidOf)), [gone])
+
   const sorted = useMemo(() => {
-    return [...processes].sort((a, b) => {
+    const bySort = (a: ProcessInfo, b: ProcessInfo) => {
       const av = a[sortKey] as number | string
       const bv = b[sortKey] as number | string
       const d = av < bv ? -1 : av > bv ? 1 : 0
       return sortDir === 'asc' ? d : -d
-    })
-  }, [processes, sortKey, sortDir])
+    }
+    return [...processes, ...gone].sort(held ? byRank(held.rank, pidOf, bySort) : bySort)
+  }, [processes, gone, held, sortKey, sortDir])
+
+  const holdOrder = () => hold(() => ({ procs: sorted, rank: rankOf(sorted, pidOf) }))
 
   const selected = useMemo(
     // Only an explicit selection: defaulting to the top row meant a click on
@@ -111,13 +127,14 @@ export default function ProcessTable() {
   )
 
   const handleSort = useCallback((key: SortKey) => {
+    release()
     if (sortKey === key) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     } else {
       setSortKey(key)
       setSortDir('desc')
     }
-  }, [sortKey])
+  }, [sortKey, release])
 
   const handleTerminate = async (force: boolean) => {
     if (!selected) return
@@ -140,7 +157,7 @@ export default function ProcessTable() {
   ]
 
   return (
-    <div className="rounded-2xl overflow-hidden flex flex-col"
+    <div className="rounded-2xl overflow-hidden flex flex-col relative"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
       <div className="flex items-center justify-between px-5 py-3.5"
         style={{ borderBottom: '1px solid var(--border)' }}>
@@ -192,13 +209,14 @@ export default function ProcessTable() {
         ))}
       </div>
 
-      <div className="overflow-y-auto" style={{ maxHeight: 260 }}>
+      <div className="overflow-y-auto relative" style={{ maxHeight: 260 }} onPointerEnter={holdOrder} onPointerLeave={letGo}>
         {sorted.map((proc, i) => (
           <ProcessRow
             key={proc.pid}
             proc={proc}
             isLast={i === sorted.length - 1}
             isSelected={selected?.pid === proc.pid}
+            gone={gonePids.has(proc.pid)}
             onSelect={setSelectedPid}
           />
         ))}
@@ -207,6 +225,9 @@ export default function ProcessTable() {
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Waiting for process data...</span>
           </div>
         )}
+        <div className="sticky bottom-0 h-0">
+          <HeldBadge held={held !== null} />
+        </div>
       </div>
 
       {selected ? (

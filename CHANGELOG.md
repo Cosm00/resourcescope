@@ -1,3 +1,8 @@
+## [1.3.1] - 2026-10-08
+
+### Changed
+- **Process lists hold still while you point at them.** In the Processes tab and the Overview's Top Processes table, rows keep their order while the pointer is over the list (values keep updating live), so the row you're aiming for no longer jumps away as rankings change. A process that exits meanwhile stays in place, dimmed, new ones are added at the bottom, and the list re-sorts a moment after the pointer leaves. An "Order held" badge shows while this is active; clicking a column header re-sorts immediately.
+
 ## [1.3.0] - 2026-09-29
 
 ### Added
